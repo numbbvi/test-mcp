@@ -1,0 +1,122 @@
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { apiPost } from '../../utils/api';
+import './Login.css';
+import userIcon from '../../assets/login/user.png';
+import pinIcon from '../../assets/login/pin.png';
+import passwordIcon from '../../assets/login/password.png';
+
+const Login = ({ onLogin }) => {
+  const navigate = useNavigate();
+  const [form, setForm] = useState({ username: '', employee_id: '', password: '' });
+  const [error, setError] = useState('');
+
+  const onChange = (e) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    // Username과 사원번호 모두 필수
+    if (!form.username || !form.employee_id) {
+      setError('Username과 사원번호를 모두 입력해주세요.');
+      return;
+    }
+
+    try {
+      const data = await apiPost('/auth/login', {
+        username: form.username || null,
+        employee_id: form.employee_id || null,
+        password: form.password
+      });
+
+      if (data.success) {
+        // JWT 토큰 저장
+        if (data.token) {
+          localStorage.setItem('token', data.token);
+        }
+        // 사용자 정보 저장
+        localStorage.setItem('user', JSON.stringify(data.user));
+        onLogin(data.user);
+      } else {
+        setError(data.message || '로그인 실패');
+      }
+    } catch (err) {
+      // 네트워크 오류인지 확인
+      if (err.message && err.message.includes('Failed to fetch')) {
+        setError('서버에 연결할 수 없습니다. 다시 접속해주세요.');
+      } else if (err.message && err.message.includes('인증이 만료')) {
+        setError(err.message);
+      } else {
+        setError(err.message || '서버 연결 오류가 발생했습니다.');
+      }
+      console.error('로그인 오류:', err);
+    }
+  };
+
+  return (
+    <div className="login-container">
+      <div className="login-box">
+        <h1>MCP Safer</h1>
+        <form onSubmit={onSubmit}>
+          <label>
+            <span>Username</span>
+            <div className="input-wrapper">
+              <img src={userIcon} alt="user" className="input-icon" />
+              <input
+                type="text"
+                name="username"
+                value={form.username}
+                onChange={onChange}
+                placeholder="username"
+                required
+              />
+            </div>
+          </label>
+          <label>
+            <span>Employee number</span>
+            <div className="input-wrapper">
+              <img src={pinIcon} alt="pin" className="input-icon" />
+              <input
+                type="text"
+                name="employee_id"
+                value={form.employee_id}
+                onChange={onChange}
+                placeholder="Employee number"
+                required
+              />
+            </div>
+          </label>
+          <label>
+            <span>Password</span>
+            <div className="input-wrapper">
+              <img src={passwordIcon} alt="password" className="input-icon" />
+              <input
+                type="password"
+                name="password"
+                value={form.password}
+                onChange={onChange}
+                placeholder="password"
+                required
+              />
+            </div>
+          </label>
+          {error && <div className="error-message">{error}</div>}
+          <button type="submit" className="login-button">Login</button>
+          <button 
+            type="button" 
+            className="register-link-button" 
+            onClick={() => navigate('/register')}
+          >
+            Don't have an account? Sign up
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default Login;
+

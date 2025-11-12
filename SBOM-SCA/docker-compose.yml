@@ -1,0 +1,12 @@
+services:
+  bomtori:
+    build: .
+    image: bomtori:latest
+    container_name: bomtori
+    entrypoint: ["tail", "-f", "/dev/null"]  # ENTRYPOINT 오버라이드하여 컨테이너가 계속 실행되도록 함
+    volumes:
+      - ./output:/app/output
+    working_dir: /app
+    environment:
+      - PYTHONUNBUFFERED=1
+

@@ -1,0 +1,62 @@
+const express = require('express');
+const dotenv = require('dotenv');
+const cors = require('cors');
+const errorHandler = require('./middleware/errorHandler');
+
+// Initialize Database (테이블 자동 생성)
+require('./config/db');
+
+// Routes
+const authRoutes = require('./routes/auth');
+const marketplaceRoutes = require('./routes/marketplace');
+const fileRoutes = require('./routes/file');
+const userRoutes = require('./routes/user');
+const dlpRoutes = require('./routes/dlp');
+const mcpRoutes = require('./routes/mcp');
+const dashboardRoutes = require('./routes/dashboard');
+const riskAssessmentRoutes = require('./routes/riskAssessment');
+const debugRoutes = require('./routes/debug'); // 개발용
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// 요청 로깅 (디버깅용 - MCP Proxy 요청 추적)
+const requestLogger = require('./middleware/requestLogger');
+app.use(requestLogger);
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/marketplace', marketplaceRoutes);
+app.use('/api/file', fileRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/dlp', dlpRoutes);
+app.use('/api/mcp', mcpRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/risk-assessment', riskAssessmentRoutes);
+console.log('[Server] Risk Assessment 라우트 등록됨: /api/risk-assessment');
+app.use('/api/debug', debugRoutes); // 개발용: DB 확인 (프로덕션에서는 제거 권장)
+
+// 정적 파일 제공 (업로드된 파일)
+app.use('/uploads', express.static('uploads'));
+
+// Health check
+app.get('/', (req, res) => {
+  res.json({ message: 'MCP Safer API Server', status: 'ok' });
+});
+
+// Error handler (마지막에 위치)
+app.use(errorHandler);
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+  console.log(`[${new Date().toISOString()}] 서버 시작됨 - Risk Assessment 라우트 포함`);
+});
+
+module.exports = app;
