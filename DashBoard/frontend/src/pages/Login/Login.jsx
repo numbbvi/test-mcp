@@ -44,15 +44,34 @@ const Login = ({ onLogin }) => {
         setError(data.message || '로그인 실패');
       }
     } catch (err) {
-      // 네트워크 오류인지 확인
-      if (err.message && err.message.includes('Failed to fetch')) {
-        setError('서버에 연결할 수 없습니다. 다시 접속해주세요.');
-      } else if (err.message && err.message.includes('인증이 만료')) {
-        setError(err.message);
-      } else {
-        setError(err.message || '서버 연결 오류가 발생했습니다.');
+      // 에러 메시지 설정 (api.js에서 이미 상세한 메시지를 제공)
+      let errorMessage = err.message || '서버 연결 오류가 발생했습니다.';
+      
+      // 401 에러인 경우 로그인 페이지로 리다이렉트
+      if (err.status === 401) {
+        window.location.href = '/';
+        return;
       }
-      console.error('로그인 오류:', err);
+      
+      // 네트워크 오류인 경우 추가 정보 표시
+      if (err.url) {
+        errorMessage += `\n\n요청 URL: ${err.url}`;
+      }
+      
+      // 상태 코드가 있는 경우 추가 정보 표시
+      if (err.status) {
+        errorMessage += `\n상태 코드: ${err.status} ${err.statusText || ''}`;
+      }
+      
+      setError(errorMessage);
+      console.error('로그인 오류:', {
+        message: err.message,
+        status: err.status,
+        statusText: err.statusText,
+        url: err.url,
+        originalError: err.originalError,
+        error: err
+      });
     }
   };
 

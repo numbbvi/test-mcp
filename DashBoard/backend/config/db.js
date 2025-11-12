@@ -1,9 +1,19 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 const { getKoreaTimeSQL } = require('../utils/dateTime');
 
+// 데이터베이스 디렉토리 경로
+const dbDir = path.join(__dirname, '..', 'db');
+
+// 데이터베이스 디렉토리가 없으면 생성
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+  console.log(`데이터베이스 디렉토리 생성: ${dbDir}`);
+}
+
 // 데이터베이스 파일 경로 (프로젝트 루트의 db 폴더에 생성)
-const dbPath = path.join(__dirname, '..', 'db', 'bomtool.db');
+const dbPath = path.join(dbDir, 'bomtool.db');
 const db = new Database(dbPath);
 
 // 외래 키 제약 조건 활성화

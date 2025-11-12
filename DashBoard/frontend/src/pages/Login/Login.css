@@ -73,9 +73,14 @@
 .error-message {
   color: #c55;
   font-size: 0.9rem;
-  padding: 8px;
+  padding: 12px;
   background: #fee;
   border-radius: 6px;
+  white-space: pre-wrap; /* 줄바꿈 유지 */
+  word-wrap: break-word; /* 긴 단어 줄바꿈 */
+  line-height: 1.5;
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 .login-button {
