@@ -16,6 +16,7 @@ const mcpRoutes = require('./routes/mcp');
 const dashboardRoutes = require('./routes/dashboard');
 const riskAssessmentRoutes = require('./routes/riskAssessment');
 const debugRoutes = require('./routes/debug'); // 개발용
+const dbTablesRoutes = require('./routes/dbTables'); // DB 테이블 조회
 
 dotenv.config();
 
@@ -42,6 +43,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/risk-assessment', riskAssessmentRoutes);
 console.log('[Server] Risk Assessment 라우트 등록됨: /api/risk-assessment');
 app.use('/api/debug', debugRoutes); // 개발용: DB 확인 (프로덕션에서는 제거 권장)
+app.use('/api/db-tables', dbTablesRoutes); // DB 테이블 조회
 
 // 정적 파일 제공 (업로드된 파일)
 app.use('/uploads', express.static('uploads'));

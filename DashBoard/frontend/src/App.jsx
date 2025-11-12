@@ -13,6 +13,7 @@ import MCPRegistry from './pages/MCPRegistry';
 import MCPRegistryDetail from './pages/MCPRegistry/MCPRegistryDetail';
 import ServerRequest from './pages/ServerRequest/ServerRequest';
 import Settings from './pages/Settings';
+import DbTables from './pages/DbTables';
 
 // 아이콘 import
 import dashboardIcon from './assets/tab/dashboard.png';
@@ -269,6 +270,7 @@ function App() {
               <Route path="/marketplace" element={<ProtectedRoute><MCPRegistry /></ProtectedRoute>} />
               <Route path="/marketplace/:id" element={<ProtectedRoute><MCPRegistryDetail /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+              <Route path="/db-tables" element={<ProtectedRoute><DbTables /></ProtectedRoute>} />
               <Route path="/login" element={<Navigate to="/dashboard" replace />} />
               <Route path="/register" element={<Navigate to="/dashboard" replace />} />
               <Route path="*" element={<Navigate to={(user.roles?.includes('admin') || user.role === 'admin') ? '/dashboard' : '/marketplace'} replace />} />
