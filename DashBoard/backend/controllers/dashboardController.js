@@ -313,15 +313,12 @@ const dashboardController = {
       const withCredentials = db.prepare(`
         SELECT COUNT(*) as count
         FROM mcp_servers
-        WHERE status = 'approved' AND connection_config IS NOT NULL
+        WHERE status = 'approved' AND connection_snippet IS NOT NULL AND connection_snippet != ''
       `).get();
 
-      const withRisks = db.prepare(`
-        SELECT COUNT(DISTINCT ms.id) as count
-        FROM mcp_servers ms
-        JOIN dlp_violation_logs dlp ON ms.id = dlp.mcp_server_id
-        WHERE ms.status = 'approved'
-      `).get();
+      // DLP 위반 로그는 현재 mcp_server_id와 직접 연결되어 있지 않음
+      // 따라서 위험한 서버 수를 계산할 수 없으므로 0으로 설정
+      const withRisks = { count: 0 };
 
       const withIssues = db.prepare(`
         SELECT COUNT(*) as count
