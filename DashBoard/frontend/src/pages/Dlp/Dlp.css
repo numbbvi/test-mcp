@@ -37,11 +37,10 @@
 
 .dlp-controls {
   display: flex;
-  gap: 16px;
-  margin-bottom: 20px;
-  align-items: center;
-  flex-wrap: wrap;
   justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+  gap: 20px;
 }
 
 .search-container {
@@ -85,7 +84,6 @@
   font-weight: 400;
 }
 
-/* 드롭다운 스타일 (MCP Registry와 완전히 동일) */
 .controls-right {
   display: flex;
   align-items: center;
@@ -384,80 +382,40 @@
   cursor: pointer;
   font-size: 0.85rem;
   font-weight: 500;
-  width: 100%;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: background 0.2s;
 }
 
 .btn-view-detail:hover {
-  background: rgba(0, 49, 83, 0.08);
-  color: #003153;
-  border-color: rgba(0, 49, 83, 0.45);
-}
-
-/* 표 내부 버튼 스타일 통일 */
-.dlp-table .btn-view-detail,
-.dlp-table td .btn-view-detail {
-  padding: 6px 12px !important;
-  font-size: 0.85rem !important;
-  font-weight: 500 !important;
-  width: 100% !important;
+  background: #002640;
 }
 
 /* 오른쪽 사이드바 스타일 */
 .dlp-right {
-  position: fixed;
-  top: 44px;
+  position: absolute;
+  top: 0;
   right: 0;
   width: 600px;
-  min-width: 400px;
-  max-width: 90vw;
   overflow-y: auto;
   background: #ffffff;
-  height: calc(100vh - 44px);
+  height: 100vh;
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
   z-index: 10;
-  display: flex;
-  flex-direction: column;
-}
-
-.dlp-resize-handle {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  cursor: col-resize;
-  z-index: 11;
-  background: transparent;
-  transition: background 0.2s;
-}
-
-.dlp-right:hover .dlp-resize-handle {
-  background: rgba(0, 49, 83, 0.1);
-}
-
-.dlp-right.resizing .dlp-resize-handle {
-  background: rgba(0, 49, 83, 0.2);
+  border-left: 1px solid #e0e0e0;
 }
 
 .dlp-detail-content {
-  padding: 0;
+  padding: 32px;
   max-width: 100%;
   word-wrap: break-word;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 .dlp-detail-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 28px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
   border-bottom: 1px solid #e0e0e0;
-  background: #f5f5f5;
-  flex-shrink: 0;
 }
 
 .dlp-detail-title h2 {
@@ -470,8 +428,8 @@
 .btn-close {
   background: none;
   border: none;
-  font-size: 24px;
-  color: #666;
+  font-size: 28px;
+  color: #003153;
   cursor: pointer;
   padding: 0;
   width: 32px;
@@ -480,19 +438,15 @@
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  transition: background 0.2s, color 0.2s;
-  line-height: 1;
+  transition: background 0.2s;
 }
 
 .btn-close:hover {
-  background: rgba(0, 0, 0, 0.1);
-  color: #333;
+  background: rgba(0, 49, 83, 0.1);
 }
 
 .dlp-detail-body {
-  padding: 28px;
-  overflow-y: auto;
-  flex: 1;
+  padding: 0;
 }
 
 .detail-section {

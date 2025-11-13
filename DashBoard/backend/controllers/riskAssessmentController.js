@@ -29,6 +29,20 @@ const BOMTORI_ROOT = process.env.BOMTORI_ROOT || path.resolve(__dirname, '../../
 const BOMTORI_OUTPUT_DIR = process.env.BOMTORI_OUTPUT_DIR || path.join(BOMTORI_ROOT, 'output');
 const BOMTORI_CONTAINER_NAME = process.env.BOMTORI_CONTAINER_NAME || 'bomtori';
 
+// TOOL-VET 분석 설정
+const TOOL_VET_ROOT = process.env.TOOL_VET_ROOT || path.resolve(__dirname, '../../../TOOL-VET');
+const TOOL_VET_OUTPUT_DIR = process.env.TOOL_VET_OUTPUT_DIR || path.join(TOOL_VET_ROOT, 'output');
+const TOOL_VET_CONTAINER_NAME = process.env.TOOL_VET_CONTAINER_NAME || 'mcp-vetting';
+
+// Go 프로젝트 버전에서 "v" 접두사 제거 함수
+const removeVersionPrefix = (version) => {
+  if (!version || typeof version !== 'string') {
+    return version;
+  }
+  // "v"로 시작하면 제거
+  return version.startsWith('v') ? version.substring(1) : version;
+};
+
 // 진행률 추적을 위한 메모리 저장소 (스캔 세션별 진행률)
 const scanProgress = new Map(); // { scanId: { bomtori: 0-100, scanner: 0-100, status: 'running'|'completed'|'failed' } }
 
@@ -190,12 +204,15 @@ const riskAssessmentController = {
       
       // 진행률 초기화
       const hasBomtori = github_url && isValidGithubUrl(github_url);
+      const hasToolVet = github_url && isValidGithubUrl(github_url);
       scanProgress.set(scanId, {
         bomtori: hasBomtori ? 0 : null, // null이면 실행 안 함
         scanner: 0,
+        toolVet: hasToolVet ? 0 : null, // null이면 실행 안 함
         status: 'running',
         bomtoriCompleted: false,
-        scannerCompleted: false
+        scannerCompleted: false,
+        toolVetCompleted: false
       });
       
       // 즉시 scan_id 반환 (비동기로 진행)
@@ -444,7 +461,7 @@ const riskAssessmentController = {
                           vulnerability_id, vulnerability_cve, vulnerability_cvss, vulnerability_severity,
                           vulnerability_title, vulnerability_description, vulnerability_reference_url,
                           reachable, functions_count, reachable_functions, unreachable_functions, raw_data
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                       `);
                       
                       for (const vuln of vulnerabilities) {
@@ -452,27 +469,51 @@ const riskAssessmentController = {
                           const pkg = vuln.package || {};
                           const vulnInfo = vuln.vulnerability || {};
                           
+                          // Go 프로젝트와 npm 프로젝트 모두 지원
+                          const packageName = pkg.name || null;
+                          // Go 프로젝트 버전에서 "v" 접두사 제거
+                          const currentVersion = removeVersionPrefix(pkg.current_version) || null;
+                          const fixedVersion = removeVersionPrefix(pkg.fixed_version) || null;
+                          const allFixedVersions = Array.isArray(pkg.all_fixed_versions) 
+                            ? pkg.all_fixed_versions.map(v => removeVersionPrefix(v))
+                            : [];
+                          const affectedRange = pkg.affected_range || null;
+                          const dependencyType = pkg.dependency_type || null;
+                          
+                          const vulnId = vulnInfo.id || null;
+                          const cve = vulnInfo.cve || null;
+                          const cvss = vulnInfo.cvss != null ? vulnInfo.cvss : null;
+                          const severity = vulnInfo.severity || null;
+                          const title = vulnInfo.title || null;
+                          const description = vulnInfo.description || null;
+                          const referenceUrl = vulnInfo.reference_url || null;
+                          
+                          const reachable = vuln.reachable === true ? 1 : 0;
+                          const functionsCount = vuln.functions_count || 0;
+                          const reachableFunctions = vuln.reachable_functions || 0;
+                          const unreachableFunctions = vuln.unreachable_functions || 0;
+                          
                           insertOssStmt.run(
                             scanId,
                             scanPath,
                             getKoreaTimeSQLite(),
-                            pkg.name || null,
-                            pkg.current_version || null,
-                            pkg.fixed_version || null,
-                            JSON.stringify(pkg.all_fixed_versions || []),
-                            pkg.affected_range || null,
-                            pkg.dependency_type || null,
-                            vulnInfo.id || null,
-                            vulnInfo.cve || null,
-                            vulnInfo.cvss || null,
-                            vulnInfo.severity || null,
-                            vulnInfo.title || null,
-                            vulnInfo.description || null,
-                            vulnInfo.reference_url || null,
-                            vuln.reachable ? 1 : 0,
-                            vuln.functions_count || 0,
-                            vuln.reachable_functions || 0,
-                            vuln.unreachable_functions || 0,
+                            packageName,
+                            currentVersion,
+                            fixedVersion,
+                            JSON.stringify(allFixedVersions),
+                            affectedRange,
+                            dependencyType,
+                            vulnId,
+                            cve,
+                            cvss,
+                            severity,
+                            title,
+                            description,
+                            referenceUrl,
+                            reachable,
+                            functionsCount,
+                            reachableFunctions,
+                            unreachableFunctions,
                             JSON.stringify(vuln)
                           );
                         } catch (insertError) {
@@ -534,7 +575,7 @@ const riskAssessmentController = {
                               vulnerability_id, vulnerability_cve, vulnerability_cvss, vulnerability_severity,
                               vulnerability_title, vulnerability_description, vulnerability_reference_url,
                               reachable, functions_count, reachable_functions, unreachable_functions, raw_data
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                           `);
                           
                           for (const vuln of vulnerabilities) {
@@ -542,31 +583,56 @@ const riskAssessmentController = {
                               const pkg = vuln.package || {};
                               const vulnInfo = vuln.vulnerability || {};
                               
+                              // Go 프로젝트와 npm 프로젝트 모두 지원
+                              const packageName = pkg.name || null;
+                              // Go 프로젝트 버전에서 "v" 접두사 제거
+                              const currentVersion = removeVersionPrefix(pkg.current_version) || null;
+                              const fixedVersion = removeVersionPrefix(pkg.fixed_version) || null;
+                              const allFixedVersions = Array.isArray(pkg.all_fixed_versions) 
+                                ? pkg.all_fixed_versions.map(v => removeVersionPrefix(v))
+                                : [];
+                              const affectedRange = pkg.affected_range || null;
+                              const dependencyType = pkg.dependency_type || null;
+                              
+                              const vulnId = vulnInfo.id || null;
+                              const cve = vulnInfo.cve || null;
+                              const cvss = vulnInfo.cvss != null ? vulnInfo.cvss : null;
+                              const severity = vulnInfo.severity || null;
+                              const title = vulnInfo.title || null;
+                              const description = vulnInfo.description || null;
+                              const referenceUrl = vulnInfo.reference_url || null;
+                              
+                              const reachable = vuln.reachable === true ? 1 : 0;
+                              const functionsCount = vuln.functions_count || 0;
+                              const reachableFunctions = vuln.reachable_functions || 0;
+                              const unreachableFunctions = vuln.unreachable_functions || 0;
+                              
                               insertOssStmt.run(
                                 scanId,
                                 scanPath,
                                 getKoreaTimeSQLite(),
-                                pkg.name || null,
-                                pkg.current_version || null,
-                                pkg.fixed_version || null,
-                                JSON.stringify(pkg.all_fixed_versions || []),
-                                pkg.affected_range || null,
-                                pkg.dependency_type || null,
-                                vulnInfo.id || null,
-                                vulnInfo.cve || null,
-                                vulnInfo.cvss || null,
-                                vulnInfo.severity || null,
-                                vulnInfo.title || null,
-                                vulnInfo.description || null,
-                                vulnInfo.reference_url || null,
-                                vuln.reachable ? 1 : 0,
-                                vuln.functions_count || 0,
-                                vuln.reachable_functions || 0,
-                                vuln.unreachable_functions || 0,
+                                packageName,
+                                currentVersion,
+                                fixedVersion,
+                                JSON.stringify(allFixedVersions),
+                                affectedRange,
+                                dependencyType,
+                                vulnId,
+                                cve,
+                                cvss,
+                                severity,
+                                title,
+                                description,
+                                referenceUrl,
+                                reachable,
+                                functionsCount,
+                                reachableFunctions,
+                                unreachableFunctions,
                                 JSON.stringify(vuln)
                               );
                             } catch (insertError) {
                               console.error('OSS 취약점 저장 오류:', insertError);
+                              console.error('저장 실패한 취약점:', JSON.stringify(vuln, null, 2));
                             }
                           }
                           
@@ -853,15 +919,183 @@ const riskAssessmentController = {
       
       scanPromises.push(scannerPromise);
       
-      // 둘 다 동시에 시작하고 완료될 때까지 대기
+      // TOOL-VET 분석도 동시에 실행 (GitHub URL이 있는 경우만)
+      if (github_url && isValidGithubUrl(github_url)) {
+        try {
+          // TOOL-VET 컨테이너가 실행 중인지 확인
+          try {
+            const checkToolVetProcess = spawn('docker', [
+              'ps',
+              '--filter',
+              `name=${TOOL_VET_CONTAINER_NAME}`,
+              '--format',
+              '{{.Names}}'
+            ], {
+              cwd: TOOL_VET_ROOT
+            });
+            
+            let toolVetStdout = '';
+            let toolVetStderr = '';
+            
+            checkToolVetProcess.stdout.on('data', (data) => {
+              toolVetStdout += data.toString();
+            });
+            
+            checkToolVetProcess.stderr.on('data', (data) => {
+              toolVetStderr += data.toString();
+            });
+            
+            await new Promise((resolve, reject) => {
+              checkToolVetProcess.on('close', (code) => {
+                if (code !== 0) {
+                  reject(new Error(`Docker 명령 실행 실패: ${toolVetStderr || '알 수 없는 오류'}`));
+                } else {
+                  resolve();
+                }
+              });
+              
+              checkToolVetProcess.on('error', (error) => {
+                reject(error);
+              });
+            });
+            
+            if (!toolVetStdout.trim()) {
+              throw new Error(`Docker 컨테이너가 실행 중이 아닙니다: ${TOOL_VET_CONTAINER_NAME}. 컨테이너를 먼저 시작해주세요.`);
+            }
+          } catch (error) {
+            console.error(`TOOL-VET 컨테이너 확인 실패: ${error.message}`);
+            const currentProgress = scanProgress.get(scanId);
+            if (currentProgress) {
+              currentProgress.toolVet = 100;
+              currentProgress.toolVetCompleted = true;
+              currentProgress.toolVetError = `TOOL-VET 시작 실패: TOOL-VET 컨테이너가 실행 중이 아닙니다: ${TOOL_VET_CONTAINER_NAME}. 컨테이너를 먼저 시작해주세요.`;
+              scanProgress.set(scanId, currentProgress);
+            }
+            // 컨테이너가 없어도 계속 진행 (오류만 기록)
+          }
+          
+          // docker exec로 실행
+          const toolVetArgs = [
+            'exec',
+            TOOL_VET_CONTAINER_NAME,
+            'python',
+            'main.py',
+            '--git-url',
+            github_url,
+            '--output-dir',
+            '/app/output'
+          ];
+          
+          console.log(`TOOL-VET 실행 명령: docker ${toolVetArgs.join(' ')}`);
+          
+          const toolVetPromise = new Promise((resolve, reject) => {
+            const toolVetProcess = spawn('docker', toolVetArgs, { cwd: TOOL_VET_ROOT });
+            
+            const currentProgress = scanProgress.get(scanId);
+            if (currentProgress) {
+              currentProgress.toolVet = 1; // 시작됨을 표시
+              scanProgress.set(scanId, currentProgress);
+            }
+            
+            let toolVetStartTime = Date.now();
+            const toolVetEstimatedDuration = 300000; // 5분 예상
+            
+            // 시간 기반 진행률 업데이트를 위한 인터벌 설정
+            const toolVetProgressInterval = setInterval(() => {
+              const currentProgress = scanProgress.get(scanId);
+              if (currentProgress && currentProgress.toolVet !== null && currentProgress.toolVet < 100 && !currentProgress.toolVetCompleted) {
+                const elapsed = Date.now() - toolVetStartTime;
+                const estimatedProgress = Math.min(Math.floor((elapsed / toolVetEstimatedDuration) * 100), 99);
+                if (estimatedProgress > currentProgress.toolVet) {
+                  currentProgress.toolVet = estimatedProgress;
+                  scanProgress.set(scanId, currentProgress);
+                }
+              }
+            }, 2000); // 2초마다 업데이트
+            
+            toolVetProcess.stdout.on('data', (data) => {
+              const output = data.toString().trim();
+              console.log('[TOOL-VET]', output);
+              
+              // 진행률 파싱 시도
+              const progressMatch = output.match(/(\d+)%/);
+              if (progressMatch) {
+                const progress = parseInt(progressMatch[1]);
+                const currentProgress = scanProgress.get(scanId);
+                if (currentProgress && !currentProgress.toolVetCompleted) {
+                  currentProgress.toolVet = Math.min(progress, 99);
+                  scanProgress.set(scanId, currentProgress);
+                }
+              }
+            });
+            
+            toolVetProcess.stderr.on('data', (data) => {
+              console.error('[TOOL-VET Error]', data.toString().trim());
+            });
+            
+            toolVetProcess.on('close', async (code) => {
+              clearInterval(toolVetProgressInterval);
+              
+              const currentProgress = scanProgress.get(scanId);
+              if (currentProgress) {
+                currentProgress.toolVet = 100;
+                currentProgress.toolVetCompleted = true;
+                scanProgress.set(scanId, currentProgress);
+              }
+              
+              if (code === 0) {
+                console.log('TOOL-VET 분석 완료');
+                resolve();
+              } else {
+                console.error(`TOOL-VET 분석 실패 (종료 코드: ${code})`);
+                const currentProgress = scanProgress.get(scanId);
+                if (currentProgress) {
+                  currentProgress.toolVet = 100;
+                  currentProgress.toolVetCompleted = true;
+                  currentProgress.toolVetError = `TOOL-VET 분석 실패 (종료 코드: ${code}). 프로젝트 타입을 감지할 수 없거나 지원되지 않는 프로젝트입니다.`;
+                  scanProgress.set(scanId, currentProgress);
+                }
+                resolve(); // 실패해도 resolve (오류는 무시하지만 오류 정보는 저장)
+              }
+            });
+            
+            toolVetProcess.on('error', (error) => {
+              clearInterval(toolVetProgressInterval);
+              
+              console.error('TOOL-VET 실행 오류:', error);
+              const currentProgress = scanProgress.get(scanId);
+              if (currentProgress) {
+                currentProgress.toolVet = 100;
+                currentProgress.toolVetCompleted = true;
+                currentProgress.toolVetError = `TOOL-VET 실행 오류: ${error.message}`;
+                scanProgress.set(scanId, currentProgress);
+              }
+              resolve(); // 오류는 무시하고 resolve (오류 정보는 저장)
+            });
+          });
+          
+          scanPromises.push(toolVetPromise);
+        } catch (error) {
+          console.error('TOOL-VET 분석 시작 실패:', error.message);
+          const currentProgress = scanProgress.get(scanId);
+          if (currentProgress) {
+            currentProgress.toolVet = 100;
+            currentProgress.toolVetCompleted = true;
+            currentProgress.toolVetError = `TOOL-VET 시작 실패: ${error.message}`;
+            scanProgress.set(scanId, currentProgress);
+          }
+        }
+      }
+      
+      // 모든 스캔을 동시에 시작하고 완료될 때까지 대기
       try {
         await Promise.all(scanPromises);
         
-        // 둘 다 완료되었는지 최종 확인
+        // 모든 스캔이 완료되었는지 최종 확인
         const finalProgress = scanProgress.get(scanId);
         if (finalProgress) {
-          // Bomtori나 Code Scanner 중 하나라도 오류가 있으면 'failed'로 설정
-          if (finalProgress.bomtoriError || finalProgress.scannerError) {
+          // Bomtori, Code Scanner, TOOL-VET 중 하나라도 오류가 있으면 'failed'로 설정
+          if (finalProgress.bomtoriError || finalProgress.scannerError || finalProgress.toolVetError) {
             finalProgress.status = 'failed';
             const errorMessages = [];
             if (finalProgress.bomtoriError) {
@@ -870,19 +1104,30 @@ const riskAssessmentController = {
             if (finalProgress.scannerError) {
               errorMessages.push(finalProgress.scannerError);
             }
+            if (finalProgress.toolVetError) {
+              errorMessages.push(finalProgress.toolVetError);
+            }
             finalProgress.error = errorMessages.join(' / ');
           } else {
             finalProgress.status = 'completed';
             
-            // 스캔 완료 시 mcp_register_requests 테이블의 scanned 필드 업데이트
+            // 스캔 완료 시 mcp_register_requests 테이블의 scanned 필드와 analysis_timestamp 업데이트
             if (serverName) {
               try {
-                const updateStmt = db.prepare('UPDATE mcp_register_requests SET scanned = 1 WHERE name = ? AND status = ?');
-                const result = updateStmt.run(serverName, 'pending');
+                // pending 상태인 경우 업데이트
+                let updateStmt = db.prepare('UPDATE mcp_register_requests SET scanned = 1, analysis_timestamp = datetime("now") WHERE name = ? AND status = ?');
+                let result = updateStmt.run(serverName, 'pending');
+                
+                // pending 상태에서 업데이트되지 않았다면 approved 상태에서도 시도
+                if (result.changes === 0) {
+                  updateStmt = db.prepare('UPDATE mcp_register_requests SET scanned = 1, analysis_timestamp = datetime("now") WHERE name = ? AND status = ?');
+                  result = updateStmt.run(serverName, 'approved');
+                }
+                
                 if (result.changes > 0) {
-                  console.log(`스캔 완료: ${serverName} 요청의 scanned 필드 업데이트 완료`);
+                  console.log(`스캔 완료: ${serverName} 요청의 scanned 필드 및 analysis_timestamp 업데이트 완료`);
                 } else {
-                  console.log(`스캔 완료: ${serverName} 요청을 찾을 수 없거나 이미 승인/거부됨`);
+                  console.log(`스캔 완료: ${serverName} 요청을 찾을 수 없거나 이미 거부됨`);
                 }
               } catch (updateError) {
                 console.error('스캔 완료 상태 업데이트 오류:', updateError);
@@ -963,6 +1208,267 @@ const riskAssessmentController = {
         const latestScan = db.prepare('SELECT DISTINCT scan_id FROM oss_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC LIMIT 1').get(scan_path);
         if (latestScan && latestScan.scan_id) {
           vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(latestScan.scan_id);
+        } else {
+          // scan_path로 직접 조회 시도 (scan_id가 없는 경우)
+          vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_path);
+        }
+        
+        // 데이터베이스에 데이터가 없고 scan_path가 GitHub URL인 경우, dashboard.json 파일에서 직접 로드 시도
+        if (vulnerabilities.length === 0 && scan_path && isValidGithubUrl(scan_path)) {
+          try {
+            // repo_name 추출 (GitHub URL에서)
+            // 예: https://github.com/github/github-mcp-server -> github-mcp-server
+            // 예: https://github.com/github/github-mcp-server.git -> github-mcp-server
+            let repoName = scan_path.split('/').pop().replace('.git', '');
+            // GitHub URL 형식: https://github.com/owner/repo
+            const urlParts = scan_path.split('/');
+            if (urlParts.length >= 2 && urlParts[urlParts.length - 2] && urlParts[urlParts.length - 1]) {
+              // owner/repo 형식으로 추출
+              repoName = `${urlParts[urlParts.length - 2]}-${urlParts[urlParts.length - 1]}`.replace('.git', '');
+            }
+            repoName = repoName.replace(/[^a-zA-Z0-9_-]/g, '_');
+            
+            const dashboardFile = path.join(BOMTORI_OUTPUT_DIR, `${repoName}-dashboard.json`);
+            
+            console.log(`데이터베이스에 OSS 취약점이 없어 dashboard.json 파일에서 로드 시도`);
+            console.log(`scan_path: ${scan_path}`);
+            console.log(`추출된 repoName: ${repoName}`);
+            console.log(`예상 파일 경로: ${dashboardFile}`);
+            
+            // 파일 존재 확인
+            try {
+              await fs.access(dashboardFile);
+              const dashboardData = JSON.parse(await fs.readFile(dashboardFile, 'utf-8'));
+              const dashboardVulnerabilities = dashboardData.vulnerabilities || [];
+              
+              console.log(`dashboard.json에서 발견된 취약점 개수: ${dashboardVulnerabilities.length}`);
+              
+              if (dashboardVulnerabilities.length > 0) {
+                // scan_id 생성 (없으면 새로 생성)
+                const scanId = uuidv4();
+                
+                // 기존 OSS 취약점 데이터 삭제 (같은 scan_path의 이전 스캔 결과)
+                try {
+                  const deleteOssStmt = db.prepare('DELETE FROM oss_vulnerabilities WHERE scan_path = ?');
+                  deleteOssStmt.run(scan_path);
+                  console.log(`기존 OSS 취약점 데이터 삭제 완료: ${scan_path}`);
+                } catch (deleteError) {
+                  console.error('기존 OSS 취약점 데이터 삭제 오류:', deleteError);
+                }
+                
+                // 데이터베이스에 저장
+                const insertOssStmt = db.prepare(`
+                  INSERT INTO oss_vulnerabilities (
+                    scan_id, scan_path, scan_timestamp,
+                    package_name, package_version, package_fixed_version, package_all_fixed_versions,
+                    package_affected_range, package_dependency_type,
+                    vulnerability_id, vulnerability_cve, vulnerability_cvss, vulnerability_severity,
+                    vulnerability_title, vulnerability_description, vulnerability_reference_url,
+                    reachable, functions_count, reachable_functions, unreachable_functions, raw_data
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `);
+                
+                let successCount = 0;
+                let errorCount = 0;
+                
+                for (const vuln of dashboardVulnerabilities) {
+                  try {
+                    const pkg = vuln.package || {};
+                    const vulnInfo = vuln.vulnerability || {};
+                    
+                    // Go 프로젝트의 경우 module 필드가 있을 수 있음
+                    // npm 프로젝트와 Go 프로젝트 모두 동일한 필드명 사용
+                    const packageName = pkg.name || null;
+                    // Go 프로젝트 버전에서 "v" 접두사 제거
+                    const currentVersion = removeVersionPrefix(pkg.current_version) || null;
+                    const fixedVersion = removeVersionPrefix(pkg.fixed_version) || null;
+                    const allFixedVersions = Array.isArray(pkg.all_fixed_versions) 
+                      ? pkg.all_fixed_versions.map(v => removeVersionPrefix(v))
+                      : [];
+                    const affectedRange = pkg.affected_range || null;
+                    const dependencyType = pkg.dependency_type || null;
+                    
+                    // vulnerability 정보
+                    const vulnId = vulnInfo.id || null;
+                    const cve = vulnInfo.cve || null;
+                    const cvss = vulnInfo.cvss != null ? vulnInfo.cvss : null; // 0도 유효한 값
+                    const severity = vulnInfo.severity || null;
+                    const title = vulnInfo.title || null;
+                    const description = vulnInfo.description || null;
+                    const referenceUrl = vulnInfo.reference_url || null;
+                    
+                    // reachability 정보
+                    const reachable = vuln.reachable === true ? 1 : 0;
+                    const functionsCount = vuln.functions_count || 0;
+                    const reachableFunctions = vuln.reachable_functions || 0;
+                    const unreachableFunctions = vuln.unreachable_functions || 0;
+                    
+                    insertOssStmt.run(
+                      scanId,
+                      scan_path,
+                      getKoreaTimeSQLite(),
+                      packageName,
+                      currentVersion,
+                      fixedVersion,
+                      JSON.stringify(allFixedVersions),
+                      affectedRange,
+                      dependencyType,
+                      vulnId,
+                      cve,
+                      cvss,
+                      severity,
+                      title,
+                      description,
+                      referenceUrl,
+                      reachable,
+                      functionsCount,
+                      reachableFunctions,
+                      unreachableFunctions,
+                      JSON.stringify(vuln)
+                    );
+                    successCount++;
+                  } catch (insertError) {
+                    errorCount++;
+                    console.error('OSS 취약점 저장 오류:', insertError);
+                    console.error('에러 메시지:', insertError.message);
+                    console.error('에러 스택:', insertError.stack);
+                    console.error('저장 실패한 취약점:', JSON.stringify(vuln, null, 2));
+                  }
+                }
+                
+                console.log(`OSS 취약점 저장 완료: 성공 ${successCount}개, 실패 ${errorCount}개 (총 ${dashboardVulnerabilities.length}개)`);
+                
+                // 저장한 데이터 다시 조회
+                vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_path);
+                console.log(`데이터베이스에서 조회된 취약점 개수: ${vulnerabilities.length}`);
+              } else {
+                console.log(`dashboard.json에 취약점이 없습니다 (vulnerabilities 배열이 비어있음)`);
+              }
+            } catch (fileError) {
+              console.log(`dashboard.json 파일을 찾을 수 없거나 읽을 수 없습니다: ${dashboardFile}`);
+              console.log(`파일 에러:`, fileError.message);
+              
+              // 파일을 찾지 못한 경우, output 디렉토리의 모든 dashboard.json 파일 확인
+              try {
+                const allFiles = await fs.readdir(BOMTORI_OUTPUT_DIR);
+                const dashboardFiles = allFiles.filter(f => f.includes('dashboard.json'));
+                console.log(`발견된 dashboard.json 파일들:`, dashboardFiles);
+                
+                // 파일명에 repoName이 포함된 파일 찾기
+                const matchingFiles = dashboardFiles.filter(f => {
+                  const fileLower = f.toLowerCase();
+                  const repoNameLower = repoName.toLowerCase();
+                  return fileLower.includes(repoNameLower) || repoNameLower.includes(fileLower.replace('-dashboard.json', ''));
+                });
+                
+                if (matchingFiles.length > 0) {
+                  console.log(`매칭되는 파일 발견: ${matchingFiles.join(', ')}`);
+                  // 가장 최근 파일 사용 시도
+                  const latestFile = path.join(BOMTORI_OUTPUT_DIR, matchingFiles[0]);
+                  try {
+                    const dashboardData = JSON.parse(await fs.readFile(latestFile, 'utf-8'));
+                    const dashboardVulnerabilities = dashboardData.vulnerabilities || [];
+                    console.log(`대체 파일에서 발견된 취약점 개수: ${dashboardVulnerabilities.length}`);
+                    
+                    if (dashboardVulnerabilities.length > 0) {
+                      const scanId = uuidv4();
+                      // 기존 데이터 삭제
+                      try {
+                        const deleteOssStmt = db.prepare('DELETE FROM oss_vulnerabilities WHERE scan_path = ?');
+                        deleteOssStmt.run(scan_path);
+                      } catch (deleteError) {
+                        console.error('기존 OSS 취약점 데이터 삭제 오류:', deleteError);
+                      }
+                      
+                      // 저장 로직 (위와 동일)
+                      const insertOssStmt = db.prepare(`
+                        INSERT INTO oss_vulnerabilities (
+                          scan_id, scan_path, scan_timestamp,
+                          package_name, package_version, package_fixed_version, package_all_fixed_versions,
+                          package_affected_range, package_dependency_type,
+                          vulnerability_id, vulnerability_cve, vulnerability_cvss, vulnerability_severity,
+                          vulnerability_title, vulnerability_description, vulnerability_reference_url,
+                          reachable, functions_count, reachable_functions, unreachable_functions, raw_data
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      `);
+                      
+                      let successCount = 0;
+                      let errorCount = 0;
+                      
+                      for (const vuln of dashboardVulnerabilities) {
+                        try {
+                          const pkg = vuln.package || {};
+                          const vulnInfo = vuln.vulnerability || {};
+                          
+                          const packageName = pkg.name || null;
+                          // Go 프로젝트 버전에서 "v" 접두사 제거
+                          const currentVersion = removeVersionPrefix(pkg.current_version) || null;
+                          const fixedVersion = removeVersionPrefix(pkg.fixed_version) || null;
+                          const allFixedVersions = Array.isArray(pkg.all_fixed_versions) 
+                            ? pkg.all_fixed_versions.map(v => removeVersionPrefix(v))
+                            : [];
+                          const affectedRange = pkg.affected_range || null;
+                          const dependencyType = pkg.dependency_type || null;
+                          
+                          const vulnId = vulnInfo.id || null;
+                          const cve = vulnInfo.cve || null;
+                          const cvss = vulnInfo.cvss != null ? vulnInfo.cvss : null;
+                          const severity = vulnInfo.severity || null;
+                          const title = vulnInfo.title || null;
+                          const description = vulnInfo.description || null;
+                          const referenceUrl = vulnInfo.reference_url || null;
+                          
+                          const reachable = vuln.reachable === true ? 1 : 0;
+                          const functionsCount = vuln.functions_count || 0;
+                          const reachableFunctions = vuln.reachable_functions || 0;
+                          const unreachableFunctions = vuln.unreachable_functions || 0;
+                          
+                          insertOssStmt.run(
+                            scanId,
+                            scan_path,
+                            getKoreaTimeSQLite(),
+                            packageName,
+                            currentVersion,
+                            fixedVersion,
+                            JSON.stringify(allFixedVersions),
+                            affectedRange,
+                            dependencyType,
+                            vulnId,
+                            cve,
+                            cvss,
+                            severity,
+                            title,
+                            description,
+                            referenceUrl,
+                            reachable,
+                            functionsCount,
+                            reachableFunctions,
+                            unreachableFunctions,
+                            JSON.stringify(vuln)
+                          );
+                          successCount++;
+                        } catch (insertError) {
+                          errorCount++;
+                          console.error('OSS 취약점 저장 오류:', insertError);
+                          console.error('저장 실패한 취약점:', JSON.stringify(vuln, null, 2));
+                        }
+                      }
+                      
+                      console.log(`대체 파일에서 OSS 취약점 저장 완료: 성공 ${successCount}개, 실패 ${errorCount}개`);
+                      vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_path);
+                      console.log(`데이터베이스에서 조회된 취약점 개수: ${vulnerabilities.length}`);
+                    }
+                  } catch (readError) {
+                    console.error('대체 파일 읽기 실패:', readError);
+                  }
+                }
+              } catch (dirError) {
+                console.error('output 디렉토리 읽기 실패:', dirError);
+              }
+            }
+          } catch (loadError) {
+            console.error('dashboard.json 파일에서 OSS 취약점 로드 오류:', loadError);
+          }
         }
       } else {
         // 모든 취약점 조회
@@ -999,6 +1505,10 @@ const riskAssessmentController = {
         if (v.raw_data) {
           try {
             const rawData = JSON.parse(v.raw_data);
+            // rawData에 functions 배열이 있으면 finding에 포함
+            if (rawData.functions && Array.isArray(rawData.functions)) {
+              finding.functions = rawData.functions;
+            }
             return { ...finding, rawData };
           } catch (e) {
             return { ...finding, rawData: v.raw_data };
@@ -1008,9 +1518,80 @@ const riskAssessmentController = {
         return finding;
       });
       
+      // packages 배열도 함께 반환 (license 정보 포함)
+      // scan_id로 조회한 경우에도 scan_path를 가져와서 packages를 로드해야 함
+      let packages = [];
+      let actualScanPath = scan_path;
+      
+      // scan_id로 조회한 경우 scan_path를 가져오기 (모든 경로에서 동일하게 처리)
+      if (!actualScanPath && vulnerabilities.length > 0) {
+        actualScanPath = vulnerabilities[0].scan_path;
+        console.log(`scan_id로 조회: scan_path 추출됨 - ${actualScanPath}`);
+      }
+      
+      // scan_path가 여전히 없으면 scan_id로 조회한 경우에도 scan_path를 다시 시도
+      if (!actualScanPath && scan_id) {
+        const scanPathFromDb = db.prepare('SELECT DISTINCT scan_path FROM oss_vulnerabilities WHERE scan_id = ? LIMIT 1').get(scan_id);
+        if (scanPathFromDb && scanPathFromDb.scan_path) {
+          actualScanPath = scanPathFromDb.scan_path;
+          console.log(`scan_id로 scan_path 재조회: ${actualScanPath}`);
+        }
+      }
+      
+      if (actualScanPath && isValidGithubUrl(actualScanPath)) {
+        try {
+          // repo_name 추출 (실제 파일명은 repo-dashboard.json 형식)
+          // GitHub URL 형식: https://github.com/owner/repo
+          let repoName = actualScanPath.split('/').pop().replace('.git', '');
+          // owner-repo 형식이 아니라 repo만 사용
+          repoName = repoName.replace(/[^a-zA-Z0-9_-]/g, '_');
+          
+          const dashboardFile = path.join(BOMTORI_OUTPUT_DIR, `${repoName}-dashboard.json`);
+          
+          try {
+            await fs.access(dashboardFile);
+            const dashboardData = JSON.parse(await fs.readFile(dashboardFile, 'utf-8'));
+            packages = dashboardData.packages || [];
+            console.log(`packages 배열 로드 완료: ${packages.length}개 패키지 (scan_path: ${actualScanPath}, repoName: ${repoName})`);
+          } catch (fileError) {
+            console.log(`dashboard.json 파일을 찾을 수 없거나 읽을 수 없습니다: ${dashboardFile}`, fileError.message);
+            
+            // 파일을 찾지 못한 경우, output 디렉토리의 모든 dashboard.json 파일 확인
+            try {
+              const allFiles = await fs.readdir(BOMTORI_OUTPUT_DIR);
+              const dashboardFiles = allFiles.filter(f => f.includes('dashboard.json'));
+              
+              // 파일명에 repoName이 포함된 파일 찾기
+              const matchingFiles = dashboardFiles.filter(f => {
+                const fileLower = f.toLowerCase();
+                const repoNameLower = repoName.toLowerCase();
+                return fileLower.includes(repoNameLower) || repoNameLower.includes(fileLower.replace('-dashboard.json', ''));
+              });
+              
+              if (matchingFiles.length > 0) {
+                // 가장 최근 파일 사용
+                const latestFile = path.join(BOMTORI_OUTPUT_DIR, matchingFiles[0]);
+                try {
+                  const dashboardData = JSON.parse(await fs.readFile(latestFile, 'utf-8'));
+                  packages = dashboardData.packages || [];
+                  console.log(`대체 파일에서 packages 배열 로드 완료: ${packages.length}개 패키지 (파일: ${matchingFiles[0]})`);
+                } catch (readError) {
+                  console.error('대체 파일 읽기 실패:', readError);
+                }
+              }
+            } catch (dirError) {
+              console.error('output 디렉토리 읽기 실패:', dirError);
+            }
+          }
+        } catch (loadError) {
+          console.error('dashboard.json 파일에서 packages 로드 오류:', loadError);
+        }
+      }
+      
       res.json({
         success: true,
-        data: findings
+        data: findings,
+        packages: packages
       });
     } catch (error) {
       console.error('OSS 취약점 조회 오류:', error);
@@ -1038,6 +1619,9 @@ const riskAssessmentController = {
         if (latestScan && latestScan.scan_id) {
           // 해당 scan_id의 모든 취약점 조회
           vulnerabilities = db.prepare('SELECT * FROM code_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(latestScan.scan_id);
+        } else {
+          // scan_path로 직접 조회 시도 (scan_id가 없는 경우)
+          vulnerabilities = db.prepare('SELECT * FROM code_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_path);
         }
       } else {
         // 모든 취약점 조회

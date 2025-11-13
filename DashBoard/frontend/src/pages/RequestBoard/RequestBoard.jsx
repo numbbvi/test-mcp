@@ -27,6 +27,7 @@ const RequestBoard = () => {
   const [detailPanelWidth, setDetailPanelWidth] = useState(600);
   const [isResizing, setIsResizing] = useState(false);
   const detailPanelRef = useRef(null);
+  const [currentScanId, setCurrentScanId] = useState(null);
 
   useEffect(() => {
     // 로그인한 사용자 정보 가져오기
@@ -172,43 +173,47 @@ const RequestBoard = () => {
           
           if (codeData.success && codeData.data && codeData.data.length > 0) {
             scanId = codeData.data[0]?.scan_id || null;
-            const codeVulns = codeData.data.length;
+          }
+          const codeVulns = codeData.success ? (codeData.data?.length || 0) : 0;
             
-            // OSS 취약점도 확인
-            if (scanId) {
+          // OSS 취약점 조회 (scan_id가 있으면 scan_id로, 없으면 scan_path로)
               try {
-                const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
+            let ossRes;
+            if (scanId) {
+              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
                   headers: {
                     'Authorization': `Bearer ${token}`
                   }
                 });
+            } else {
+              // scan_id가 없으면 scan_path로 직접 조회
+              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`
+                }
+              });
+            }
                 const ossData = await ossRes.json();
                 if (ossData.success && ossData.data) {
                   ossVulns = ossData.data.length || 0;
+              // scan_id가 없었는데 OSS 데이터에서 scan_id를 얻을 수 있으면 업데이트
+              if (!scanId && ossData.data.length > 0 && ossData.data[0]?.scan_id) {
+                scanId = ossData.data[0].scan_id;
+              }
                 }
               } catch (ossError) {
                 console.error('OSS 취약점 조회 실패:', ossError);
-              }
             }
             
-            // 스캔 결과가 있으면
+          // 스캔 결과 설정
             setRiskAnalysisResult({
               ossVulnerabilities: ossVulns,
               codeVulnerabilities: codeVulns,
               toolVulnerabilities: 0,
               scanId: scanId
             });
+          setCurrentScanId(scanId); // scanId를 별도 state에 저장
             setAnalysisCompleted(true);
-          } else {
-            // 스캔 결과가 없으면 (데이터가 없을 수도 있음)
-            setRiskAnalysisResult({
-              ossVulnerabilities: 0,
-              codeVulnerabilities: 0,
-              toolVulnerabilities: 0,
-              scanId: null
-            });
-            setAnalysisCompleted(true);
-          }
         } catch (error) {
           console.error('스캔 결과 조회 실패:', error);
           // 조회 실패 시에도 스캔 완료로 표시 (scanned === 1이므로)
@@ -332,6 +337,7 @@ const RequestBoard = () => {
                         toolVulnerabilities: 0,
                         scanId: scanId
                       });
+                      setCurrentScanId(scanId); // scanId를 별도 state에 저장
                     } catch (error) {
                       console.error('OSS 취약점 개수 조회 실패:', error);
                       setRiskAnalysisResult({
@@ -340,6 +346,7 @@ const RequestBoard = () => {
                         toolVulnerabilities: 0,
                         scanId: scanId
                       });
+                      setCurrentScanId(scanId); // scanId를 별도 state에 저장
                     }
                     
                     setAnalysisCompleted(true);
@@ -347,10 +354,12 @@ const RequestBoard = () => {
                     
                     // 스캔 완료 후 요청 목록을 다시 불러와서 scanned 필드 업데이트
                     fetchRequests();
-                    // 현재 선택된 요청도 업데이트
+                    // 현재 선택된 요청도 업데이트하고 상세 정보 다시 로드
                     if (selectedRequest) {
                       const updatedRequest = { ...selectedRequest, scanned: 1 };
                       setSelectedRequest(updatedRequest);
+                      // 상세 정보 다시 로드하여 최신 취약점 개수 반영
+                      handleViewDetail(updatedRequest);
                     }
                     break;
                   } catch (error) {
@@ -386,13 +395,46 @@ const RequestBoard = () => {
     }
   };
 
-  const handleViewRiskDetail = () => {
-    if (!riskAnalysisResult?.scanId) return;
+  const handleViewRiskDetail = async () => {
+    if (!selectedRequest) return;
     
-    // Risk Assessment result 페이지로 이동
-    localStorage.setItem('riskAssessmentScanId', riskAnalysisResult.scanId);
+    const scanPath = selectedRequest.github_link || selectedRequest.file_path;
+    if (!scanPath) {
+      alert('스캔 경로가 없습니다.');
+      return;
+    }
+    
+    // scanId는 riskAnalysisResult 또는 currentScanId에서 가져옴
+    let scanId = riskAnalysisResult?.scanId || currentScanId;
+    
+    // scanId가 없으면 다시 조회 (하지만 없어도 scan_path로 이동 가능)
+    if (!scanId) {
+      try {
+        const token = localStorage.getItem('token');
+        const codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        const codeData = await codeRes.json();
+        if (codeData.success && codeData.data && codeData.data.length > 0) {
+          scanId = codeData.data[0]?.scan_id || null;
+        }
+      } catch (error) {
+        console.error('scanId 조회 실패:', error);
+        // scanId가 없어도 scan_path로 이동 가능하므로 계속 진행
+      }
+    }
+    
+    // Risk Assessment result 페이지로 이동 (Total Vulnerabilities 탭으로)
+    // scanId가 있으면 저장, 없으면 scan_path로 이동
+    if (scanId) {
+      localStorage.setItem('riskAssessmentScanId', scanId);
+    }
+    localStorage.setItem('riskAssessmentScanPath', scanPath); // scan_path 저장
     localStorage.setItem('riskAssessmentGithubUrl', selectedRequest.github_link);
     localStorage.setItem('riskAssessmentServerName', selectedRequest.name);
+    localStorage.setItem('riskAssessmentTab', 'Total Vulnerabilities'); // summary 탭으로 설정
     
     // Risk Assessment 페이지로 이동
     navigate('/risk-assessment');
@@ -478,6 +520,7 @@ const RequestBoard = () => {
     setScannedTools([]);
     setScanResult(null);
     setShowScanModal(false);
+    setCurrentScanId(null); // scanId 초기화
   };
 
   const handleReview = async () => {
@@ -682,7 +725,7 @@ const RequestBoard = () => {
           <input
             type="text"
             className="search-input"
-            placeholder="Search Servers"
+            placeholder="Search servers"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -767,15 +810,7 @@ const RequestBoard = () => {
       </div>
 
       {selectedRequest && (
-        <div 
-          className={`request-board-right ${isResizing ? 'resizing' : ''}`}
-          style={{ width: `${detailPanelWidth}px` }}
-          ref={detailPanelRef}
-        >
-          <div 
-            className="request-board-resize-handle"
-            onMouseDown={handleResizeStart}
-          />
+        <div className="request-board-right">
           <div className="request-detail-content">
             <div className="request-detail-header">
               <div className="request-detail-title">
@@ -964,7 +999,9 @@ const RequestBoard = () => {
                               </div>
                             </div>
                           </div>
-                          {riskAnalysisResult.scanId && (
+                        </>
+                      )}
+                      {/* scanned === 1이면 항상 상세보기 버튼 표시 */}
                             <button
                               onClick={handleViewRiskDetail}
                               className="btn-refresh"
@@ -972,9 +1009,6 @@ const RequestBoard = () => {
                             >
                               상세보기
                             </button>
-                          )}
-                        </>
-                      )}
 
                       {/* 분석 결과가 있을 때만 검토 폼 표시 */}
                       {isAdmin && (
@@ -985,7 +1019,7 @@ const RequestBoard = () => {
                             <textarea
                               value={reviewForm.server_description}
                               onChange={(e) => setReviewForm({ ...reviewForm, server_description: e.target.value })}
-                              placeholder="Marketplace에 표시될 서버 설명을 입력하세요..."
+                              placeholder="MCP Registry에 표시될 서버 설명을 입력하세요..."
                               rows="5"
                               required
                             />

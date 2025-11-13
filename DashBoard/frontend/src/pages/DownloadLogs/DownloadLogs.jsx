@@ -251,9 +251,7 @@ const DownloadLogs = () => {
       </div>
 
       <div className="logs-table-container">
-        {sortedLogs.length === 0 ? (
-          <div className="empty-state">다운로드 로그가 없습니다.</div>
-        ) : (
+        <div className="logs-table-wrapper">
           <table className="logs-table">
             <thead>
               <tr>
@@ -270,20 +268,28 @@ const DownloadLogs = () => {
               </tr>
             </thead>
             <tbody>
-              {sortedLogs.map((log) => (
-                <tr key={log.id}>
-                  <td>{formatDate(log.downloaded_at)}</td>
-                  <td>{log.username || '-'}</td>
-                  <td>{log.employee_id || '-'}</td>
-                  <td>{log.team || '-'}</td>
-                  <td>{log.mcp_server_name || '-'}</td>
-                  <td className="file-name-cell">{log.file_name || log.file_path || '-'}</td>
-                  <td>{log.ip_address || '-'}</td>
+              {sortedLogs.length === 0 ? (
+                <tr>
+                  <td colSpan="7" style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                    다운로드 로그가 없습니다.
+                  </td>
                 </tr>
-              ))}
+              ) : (
+                sortedLogs.map((log) => (
+                  <tr key={log.id}>
+                    <td>{formatDate(log.downloaded_at)}</td>
+                    <td>{log.username || '-'}</td>
+                    <td>{log.employee_id || '-'}</td>
+                    <td>{log.team || '-'}</td>
+                    <td>{log.mcp_server_name || '-'}</td>
+                    <td className="file-name-cell">{log.file_name || log.file_path || '-'}</td>
+                    <td>{log.ip_address || '-'}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
-        )}
+        </div>
       </div>
 
       <Pagination

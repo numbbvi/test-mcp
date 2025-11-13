@@ -73,6 +73,7 @@ const marketplaceController = {
           status: server.status,
           github_link: server.github_link,
           file_path: server.file_path,
+          analysis_timestamp: server.analysis_timestamp || null,
           source: 'mcp_servers'
         });
       });
@@ -88,6 +89,7 @@ const marketplaceController = {
             status: request.status,
             github_link: request.github_link,
             file_path: request.file_path,
+            analysis_timestamp: request.analysis_timestamp || null,
             source: 'mcp_register_requests'
           });
         }
@@ -107,11 +109,13 @@ const marketplaceController = {
       servers = servers.slice(offset, offset + limitNum);
       
       // 각 서버의 최신 분석 시간 조회
-      const list = servers.map(({ id, name, description, short_description, status, github_link, file_path }) => {
-        // 분석 시간 조회 (github_link 또는 file_path로 최신 scan_timestamp 찾기)
-        let analysis_timestamp = null;
+      const list = servers.map(({ id, name, description, short_description, status, github_link, file_path, analysis_timestamp: existing_timestamp }) => {
+        // 이미 analysis_timestamp가 있으면 사용, 없으면 code_vulnerabilities에서 조회
+        let analysis_timestamp = existing_timestamp || null;
         const scanPath = github_link || file_path;
-        if (scanPath) {
+        
+        // analysis_timestamp가 없고 scanPath가 있으면 code_vulnerabilities에서 조회
+        if (!analysis_timestamp && scanPath) {
           try {
             // 최신 scan_timestamp 조회
             const latestScan = db.prepare(`

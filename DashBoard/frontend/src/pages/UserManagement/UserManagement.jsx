@@ -289,9 +289,16 @@ const UserManagement = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {teamUsers.map(user => (
-              <tr key={user.id}>
-                {editingUser?.id === user.id ? (
+                  {teamUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                        데이터가 없습니다.
+                      </td>
+                    </tr>
+                  ) : (
+                    teamUsers.map(user => (
+                      <tr key={user.id}>
+                        {editingUser?.id === user.id ? (
                   <>
                     <td>{user.username}</td>
                     <td>{user.employee_id}</td>
@@ -400,8 +407,9 @@ const UserManagement = () => {
                     </td>
                   </>
                 )}
-                  </tr>
-                  ))}
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>

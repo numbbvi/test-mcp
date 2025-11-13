@@ -3,7 +3,11 @@ import './RiskAssessment.css';
 
 const RiskAssessment = () => {
   const [viewMode, setViewMode] = useState('list'); // 'list' or 'result'
-  const [selectedTab, setSelectedTab] = useState('Total Vulnerabilities');
+  const [selectedTab, setSelectedTab] = useState(() => {
+    // localStorage에서 탭 정보 확인
+    const savedTab = localStorage.getItem('riskAssessmentTab');
+    return savedTab || 'Total Vulnerabilities';
+  });
   const [selectedIssue, setSelectedIssue] = useState(null);
   const [codeIssues, setCodeIssues] = useState([]);
   const [analysisUrl, setAnalysisUrl] = useState('');
@@ -21,11 +25,14 @@ const RiskAssessment = () => {
   const [vulnerabilitySortDirection, setVulnerabilitySortDirection] = useState('desc'); // 기본값: 높은 순
   const [serverName, setServerName] = useState('');
   const [ossIssues, setOssIssues] = useState([]);
+  const [selectedOssIssue, setSelectedOssIssue] = useState(null);
+  const [currentPathIndex, setCurrentPathIndex] = useState(0); // 현재 표시 중인 경로 인덱스
   const [sbomScannerData, setSbomScannerData] = useState([]);
   const [toolValidationIssues, setToolValidationIssues] = useState([]);
   const [detailPanelWidth, setDetailPanelWidth] = useState(600);
   const [isResizing, setIsResizing] = useState(false);
   const detailPanelRef = useRef(null);
+  const [packagesData, setPackagesData] = useState([]);
 
   // 스캔 결과를 Risk Assessment 형식으로 변환
   const formatScanResults = (findings) => {
@@ -227,14 +234,24 @@ const RiskAssessment = () => {
                       });
                       const ossData = await ossRes.json();
                       
-                      if (ossData.success && ossData.data) {
-                        setOssIssues(ossData.data);
+                      if (ossData.success) {
+                        // packages 배열도 저장 (license 정보 포함)
+                        // packages가 없어도 빈 배열로 설정하여 취약점이 없는 패키지 필터링이 작동하도록 함
+                        setPackagesData(Array.isArray(ossData.packages) ? ossData.packages : []);
+                        
+                        if (ossData.data) {
+                          setOssIssues(ossData.data);
+                        } else {
+                          setOssIssues([]);
+                        }
                       } else {
                         setOssIssues([]);
+                        setPackagesData([]);
                       }
                     } catch (error) {
                       console.error('OSS 취약점 데이터 로드 실패:', error);
                       setOssIssues([]);
+                      setPackagesData([]);
                     }
                     
                     // Tool Validation은 현재 데이터베이스에 저장되지 않음
@@ -245,7 +262,7 @@ const RiskAssessment = () => {
                     setAnalysisUrl(server.github_link || server.file_path || '');
                     setServerName(server.name || '');
                     setViewMode('result');
-                    setSelectedTab('Code Vulnerabilities');
+                    setSelectedTab('Total Vulnerabilities');
                     
                     // 서버 목록 새로고침
                     const loadMcpServers = async () => {
@@ -382,23 +399,35 @@ const RiskAssessment = () => {
               });
               const ossData = await ossRes.json();
               
-              if (ossData.success && ossData.data) {
-                setOssIssues(ossData.data);
+              if (ossData.success) {
+                // packages 배열도 저장 (license 정보 포함)
+                // packages가 없어도 빈 배열로 설정하여 취약점이 없는 패키지 필터링이 작동하도록 함
+                setPackagesData(Array.isArray(ossData.packages) ? ossData.packages : []);
+                
+                if (ossData.data) {
+                  setOssIssues(ossData.data);
+                } else {
+                  setOssIssues([]);
+                }
               } else {
                 setOssIssues([]);
+                setPackagesData([]);
               }
             } catch (error) {
               console.error('OSS 취약점 데이터 로드 실패:', error);
               setOssIssues([]);
+              setPackagesData([]);
             }
           } catch (error) {
             console.error('취약점 데이터 로드 실패:', error);
             setCodeIssues([]);
             setOssIssues([]);
+            setPackagesData([]);
           }
         } else {
           setCodeIssues([]);
           setOssIssues([]);
+          setPackagesData([]);
         }
         
         // Tool Validation은 현재 데이터베이스에 저장되지 않음
@@ -410,7 +439,7 @@ const RiskAssessment = () => {
         const serverNameFromUrl = analysisUrl.match(/github\.com\/[^\/]+\/([^\/]+)/)?.[1] || '';
         setServerName(serverNameFromUrl);
         setViewMode('result');
-        setSelectedTab('Code Vulnerabilities');
+        setSelectedTab('Total Vulnerabilities');
       } else {
         alert(data.message || '분석 실패');
         // 실패 시 빈 배열로 설정
@@ -466,24 +495,44 @@ const RiskAssessment = () => {
     }
   }, [viewMode, serverFilter]);
 
-  // localStorage에서 scanId를 읽어서 자동으로 결과 뷰로 전환
+  // localStorage에서 scanId 또는 scan_path를 읽어서 자동으로 결과 뷰로 전환
   useEffect(() => {
     const scanId = localStorage.getItem('riskAssessmentScanId');
+    const scanPath = localStorage.getItem('riskAssessmentScanPath');
     const githubUrl = localStorage.getItem('riskAssessmentGithubUrl');
     const savedServerName = localStorage.getItem('riskAssessmentServerName');
+    const savedTab = localStorage.getItem('riskAssessmentTab');
     
-    if (scanId && githubUrl) {
-      // scanId로 취약점 데이터 로드
+    // 저장된 탭이 있으면 설정
+    if (savedTab) {
+      setSelectedTab(savedTab);
+    }
+    
+    // scanId가 있거나 scan_path가 있으면 결과 뷰로 전환
+    if ((scanId || scanPath) && (githubUrl || scanPath)) {
+      // scanId 또는 scan_path로 취약점 데이터 로드
       const loadScanResults = async () => {
         try {
           const token = localStorage.getItem('token');
           
           // Code Vulnerabilities 로드
-          const codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}`, {
+          let codeRes;
+          if (scanId) {
+            codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
           });
+          } else if (scanPath) {
+            codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
+          } else {
+            return;
+          }
+          
           const codeData = await codeRes.json();
           
           if (codeData.success && codeData.data) {
@@ -495,17 +544,37 @@ const RiskAssessment = () => {
           
           // OSS Vulnerabilities 로드
           try {
-            const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
+            let ossRes;
+            if (scanId) {
+              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
               headers: {
                 'Authorization': `Bearer ${token}`
               }
             });
+            } else if (scanPath) {
+              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`
+                }
+              });
+            }
+            
+            if (ossRes) {
             const ossData = await ossRes.json();
             
             if (ossData.success && ossData.data) {
               setOssIssues(ossData.data);
+                // packages 배열도 저장 (license 정보 포함)
+                // packages가 없어도 빈 배열로 설정하여 취약점이 없는 패키지 필터링이 작동하도록 함
+                setPackagesData(Array.isArray(ossData.packages) ? ossData.packages : []);
+                console.log('OSS 데이터 로드:', {
+                  취약점개수: ossData.data?.length || 0,
+                  packages개수: Array.isArray(ossData.packages) ? ossData.packages.length : 0
+                });
             } else {
               setOssIssues([]);
+                setPackagesData([]);
+              }
             }
           } catch (error) {
             console.error('OSS 취약점 데이터 로드 실패:', error);
@@ -516,15 +585,18 @@ const RiskAssessment = () => {
           setToolValidationIssues([]);
           setSbomScannerData([]);
           
-          setAnalysisUrl(githubUrl);
+          setAnalysisUrl(githubUrl || scanPath);
           setServerName(savedServerName || '');
           setViewMode('result');
-          setSelectedTab('Code Vulnerabilities');
+          // 저장된 탭이 있으면 사용, 없으면 'Total Vulnerabilities' 기본값
+          setSelectedTab(savedTab || 'Total Vulnerabilities');
           
           // localStorage에서 제거
           localStorage.removeItem('riskAssessmentScanId');
+          localStorage.removeItem('riskAssessmentScanPath');
           localStorage.removeItem('riskAssessmentGithubUrl');
           localStorage.removeItem('riskAssessmentServerName');
+          localStorage.removeItem('riskAssessmentTab');
         } catch (error) {
           console.error('스캔 결과 로드 실패:', error);
           // 오류 발생 시 빈 배열로 설정
@@ -552,11 +624,14 @@ const RiskAssessment = () => {
 
   // ESC 키로 상세보기 닫기
   useEffect(() => {
-    if (!selectedIssue) return;
-
     const handleEscape = (e) => {
       if (e.key === 'Escape') {
+        if (selectedOssIssue) {
+          setSelectedOssIssue(null);
+          setCurrentPathIndex(0); // 경로 인덱스 초기화
+        } else if (selectedIssue) {
         setSelectedIssue(null);
+        }
       }
     };
 
@@ -564,39 +639,19 @@ const RiskAssessment = () => {
     return () => {
       window.removeEventListener('keydown', handleEscape);
     };
-  }, [selectedIssue]);
+  }, [selectedIssue, selectedOssIssue]);
 
-  // Resize 기능
+  // Drawer 열릴 때 body에 drawer-open 클래스 추가
   useEffect(() => {
-    if (!isResizing) return;
-
-    const handleMouseMove = (e) => {
-      if (!isResizing) return;
-      const newWidth = window.innerWidth - e.clientX;
-      const minWidth = 400;
-      const maxWidth = window.innerWidth * 0.9;
-      if (newWidth >= minWidth && newWidth <= maxWidth) {
-        setDetailPanelWidth(newWidth);
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-
+    if (selectedOssIssue) {
+      document.body.classList.add('drawer-open');
+    } else {
+      document.body.classList.remove('drawer-open');
+    }
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.classList.remove('drawer-open');
     };
-  }, [isResizing]);
-
-  const handleResizeStart = (e) => {
-    e.preventDefault();
-    setIsResizing(true);
-  };
+  }, [selectedOssIssue]);
 
 
   // 심각도 점수 계산 함수 (CVSS 점수 우선, 없으면 심각도 텍스트를 점수로 변환)
@@ -624,12 +679,27 @@ const RiskAssessment = () => {
     
     switch (selectedTab) {
       case 'OSS Vulnerabilities':
-        // OSS 취약점에 id 추가
-        issues = ossIssues.map((issue, index) => ({
-          ...issue,
-          id: issue.id || `oss-${index}-${issue.package?.name}-${issue.vulnerability?.id}`,
-          severityScore: getSeverityScore(issue.vulnerability?.severity, issue.vulnerability?.cvss)
-        }));
+        // 취약점이 있는 항목만 표시 (하나의 패키지에 여러 취약점이 있으면 모두 표시)
+        issues = ossIssues.map((issue, index) => {
+          const pkgName = issue.package?.name;
+          const vulnId = issue.vulnerability?.id;
+          // packagesData에서 해당 패키지 찾기 (license 정보를 위해)
+          const pkgData = packagesData.find(p => p.name === pkgName);
+          
+          return {
+            ...issue,
+            // 각 취약점마다 고유한 ID 생성 (패키지명 + 취약점 ID)
+            id: issue.id || `oss-${index}-${pkgName}-${vulnId || index}`,
+            severityScore: getSeverityScore(issue.vulnerability?.severity, issue.vulnerability?.cvss),
+            // packagesData에서 license 정보 추가
+            package: {
+              ...issue.package,
+              license: pkgData?.license || (Array.isArray(pkgData?.licenses) && pkgData.licenses[0]) || issue.package?.license || '',
+              licenses: pkgData?.licenses || issue.package?.licenses || []
+            }
+          };
+        });
+        
         break;
       case 'Code Vulnerabilities':
         issues = codeIssues.map(issue => ({
@@ -654,6 +724,40 @@ const RiskAssessment = () => {
         break;
       default:
         return [];
+    }
+    
+    // 검색 필터 적용
+    if (searchTerm && searchTerm.trim()) {
+      const term = searchTerm.trim().toLowerCase();
+      issues = issues.filter(issue => {
+        // OSS Vulnerabilities 검색
+        if (selectedTab === 'OSS Vulnerabilities' || selectedTab === 'Total Vulnerabilities') {
+          const pkgName = issue.package?.name || '';
+          const vulnId = issue.vulnerability?.cve || issue.vulnerability?.id || '';
+          const vulnTitle = issue.vulnerability?.title || '';
+          const vulnDesc = issue.vulnerability?.description || '';
+          const version = issue.package?.current_version || '';
+          return (
+            pkgName.toLowerCase().includes(term) ||
+            vulnId.toLowerCase().includes(term) ||
+            vulnTitle.toLowerCase().includes(term) ||
+            vulnDesc.toLowerCase().includes(term) ||
+            version.toLowerCase().includes(term)
+          );
+        }
+        // Code Vulnerabilities 검색
+        if (selectedTab === 'Code Vulnerabilities' || selectedTab === 'Total Vulnerabilities') {
+          const vuln = issue.vulnerability || issue.rule_id || '';
+          const desc = issue.description || issue.message || '';
+          const file = issue.vulnerablePackage || issue.file || '';
+          return (
+            vuln.toString().toLowerCase().includes(term) ||
+            desc.toLowerCase().includes(term) ||
+            file.toLowerCase().includes(term)
+          );
+        }
+        return true;
+      });
     }
     
     // 정렬 적용
@@ -748,7 +852,7 @@ const RiskAssessment = () => {
     const issues = getCurrentIssues();
     
     return (
-      <div>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '24px' }}>
         <div className="issues-table">
           <table>
           <thead>
@@ -783,9 +887,9 @@ const RiskAssessment = () => {
                   </th>
                   <th>Reachability</th>
                   <th>Package</th>
-                  <th>Current Version</th>
+                  <th>Version</th>
                   <th>Fix Version</th>
-                  <th>Dependency Type</th>
+                  <th>Dependency</th>
                   <th>License</th>
                   <th>상세보기</th>
                 </>
@@ -865,13 +969,13 @@ const RiskAssessment = () => {
                       </td>
                       <td>
                         <button 
-                          className="fix-button"
+                          className="oss-detail-btn"
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedIssue(issue);
                           }}
                         >
-                          상세보기
+                          View Detail
                         </button>
                       </td>
                     </tr>
@@ -880,6 +984,72 @@ const RiskAssessment = () => {
                   // OSS Vulnerabilities 테이블 구조 (detail.js 참고)
                   const pkg = issue.package || {};
                   const vuln = issue.vulnerability || {};
+                  
+                  // 취약점이 없는 패키지 처리
+                  if (!vuln || !vuln.id) {
+                    return (
+                      <tr
+                        key={issue.id || `pkg-${pkg.name}`}
+                        className={selectedIssue?.id === issue.id ? 'selected' : ''}
+                      >
+                        <td>-</td>
+                        <td><span style={{ color: '#6c757d' }}>-</span></td>
+                        <td><span style={{ color: '#6c757d' }}>-</span></td>
+                        <td className="package-name">{pkg.name || 'Unknown'}</td>
+                        <td>
+                          {pkg.current_version ? (
+                            <span className="oss-table__value" title={pkg.current_version}>
+                              {pkg.current_version}
+                            </span>
+                          ) : (
+                            <span style={{ color: '#6c757d' }}>-</span>
+                          )}
+                        </td>
+                        <td><span style={{ color: '#6c757d' }}>-</span></td>
+                        <td>
+                          {(() => {
+                            const depType = (pkg.dependency_type || '').toLowerCase();
+                            let label = 'Unknown';
+                            let className = 'dependency-pill dependency-pill--unknown';
+                            
+                            if (depType === 'direct') {
+                              label = 'Direct';
+                              className = 'dependency-pill dependency-pill--direct';
+                            } else if (depType === 'transitive') {
+                              label = 'Transitive';
+                              className = 'dependency-pill dependency-pill--transitive';
+                            } else if (depType === 'stdlib') {
+                              label = 'Stdlib';
+                              className = 'dependency-pill dependency-pill--stdlib';
+                            } else if (depType) {
+                              label = depType.charAt(0).toUpperCase() + depType.slice(1);
+                              className = `dependency-pill dependency-pill--${depType}`;
+                            }
+                            
+                            return (
+                              <span className={className}>
+                                {label}
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td>
+                          {(() => {
+                            const license = pkg.license || (Array.isArray(pkg.licenses) && pkg.licenses[0]) || '';
+                            return license ? (
+                              <span className="oss-table__value" title={license}>
+                                {license}
+                              </span>
+                            ) : (
+                              <span style={{ color: '#6c757d' }}>-</span>
+                            );
+                          })()}
+                        </td>
+                        <td>-</td>
+                      </tr>
+                    );
+                  }
+                  
                   const cvss = vuln.cvss || 0;
                   const severity = vuln.severity || 'unknown';
                   
@@ -896,10 +1066,23 @@ const RiskAssessment = () => {
                   
                   // Dependency type 라벨 및 클래스
                   const dependencyType = (pkg.dependency_type || '').toLowerCase();
-                  const dependencyTypeLabel = dependencyType === 'direct' ? 'Direct' : dependencyType === 'transitive' ? 'Transitive' : 'Unknown';
-                  const dependencyTypeClass = dependencyType === 'direct' ? 'dependency-pill dependency-pill--direct' : 
-                                               dependencyType === 'transitive' ? 'dependency-pill dependency-pill--transitive' : 
-                                               'dependency-pill dependency-pill--unknown';
+                  let dependencyTypeLabel = 'Unknown';
+                  let dependencyTypeClass = 'dependency-pill dependency-pill--unknown';
+                  
+                  if (dependencyType === 'direct') {
+                    dependencyTypeLabel = 'Direct';
+                    dependencyTypeClass = 'dependency-pill dependency-pill--direct';
+                  } else if (dependencyType === 'transitive') {
+                    dependencyTypeLabel = 'Transitive';
+                    dependencyTypeClass = 'dependency-pill dependency-pill--transitive';
+                  } else if (dependencyType === 'stdlib') {
+                    dependencyTypeLabel = 'Stdlib';
+                    dependencyTypeClass = 'dependency-pill dependency-pill--stdlib';
+                  } else if (dependencyType) {
+                    // 기타 dependency_type이 있으면 그대로 표시 (첫 글자 대문자)
+                    dependencyTypeLabel = dependencyType.charAt(0).toUpperCase() + dependencyType.slice(1);
+                    dependencyTypeClass = `dependency-pill dependency-pill--${dependencyType}`;
+                  }
                   
                   // Reachability 상태
                   let reachabilityStatus = 'unknown';
@@ -912,14 +1095,27 @@ const RiskAssessment = () => {
                     reachabilityBadge = 'Ø Unreachable';
                   }
                   
-                  // License 추출
-                  const license = pkg.license || (Array.isArray(pkg.licenses) && pkg.licenses[0]) || '';
+                  // License 추출 (package 객체에서 직접 가져오거나, packages 배열에서 찾기)
+                  let license = pkg.license || (Array.isArray(pkg.licenses) && pkg.licenses[0]) || '';
+                  if (!license && pkg.name) {
+                    // packages 배열에서 license 정보 찾기
+                    const pkgData = packagesData.find(p => p.name === pkg.name);
+                    if (pkgData) {
+                      license = pkgData.license || (Array.isArray(pkgData.licenses) && pkgData.licenses[0]) || '';
+                    }
+                  }
                   
                   return (
                     <tr
                       key={issue.id || `${pkg.name}-${vuln.id}`}
                       className={selectedIssue?.id === issue.id ? 'selected' : ''}
-                      onClick={() => setSelectedIssue(issue)}
+                      onClick={() => {
+                        // 취약점이 있는 경우에만 상세보기 배너 열기
+                        if (vuln && vuln.id) {
+                          setSelectedOssIssue(issue);
+                          setCurrentPathIndex(0); // 경로 인덱스 초기화
+                        }
+                      }}
                     >
                       <td>
                         <div className="vuln-cell">
@@ -982,7 +1178,8 @@ const RiskAssessment = () => {
                           className="oss-detail-btn"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setSelectedIssue(issue);
+                            setSelectedOssIssue(issue);
+                            setCurrentPathIndex(0); // 경로 인덱스 초기화
                           }}
                         >
                           View Detail
@@ -1174,7 +1371,7 @@ const RiskAssessment = () => {
                 <input
                   type="text"
                   className="search-input"
-                  placeholder="Search Servers"
+                  placeholder="Search servers"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -1420,8 +1617,16 @@ const RiskAssessment = () => {
                                     
                                     if (ossData.success && ossData.data) {
                                       setOssIssues(ossData.data);
+                                      // packages 배열도 저장 (license 정보 포함)
+                                      // packages가 없어도 빈 배열로 설정하여 취약점이 없는 패키지 필터링이 작동하도록 함
+                                      setPackagesData(Array.isArray(ossData.packages) ? ossData.packages : []);
+                                      console.log('OSS 데이터 로드 (scan_path):', {
+                                        취약점개수: ossData.data?.length || 0,
+                                        packages개수: Array.isArray(ossData.packages) ? ossData.packages.length : 0
+                                      });
                                     } else {
                                       setOssIssues([]);
+                                      setPackagesData([]);
                                     }
                                   } catch (error) {
                                     console.error('OSS 취약점 데이터 로드 실패:', error);
@@ -1437,7 +1642,7 @@ const RiskAssessment = () => {
                                 setAnalysisUrl(scanPath);
                                 setServerName(server.name || '');
                                 setViewMode('result');
-                                setSelectedTab('Code Vulnerabilities');
+                                setSelectedTab('Total Vulnerabilities');
                               } catch (error) {
                                 console.error('스캔 결과 로드 실패:', error);
                                 alert('스캔 결과를 불러오는 중 오류가 발생했습니다.');
@@ -1499,27 +1704,36 @@ const RiskAssessment = () => {
           </div>
           <div className="risk-assessment-summary">
             <span className="results-count">
-              {selectedTab === 'Total Vulnerabilities' 
-                ? `${getCurrentIssues().length} total vulnerabilities`
-                : `${getCurrentIssues().length} matching results`}
+              {(() => {
+                const issues = getCurrentIssues();
+                // 취약점이 있는 항목만 카운트 (vulnerability가 있는 경우)
+                const vulnerabilityCount = issues.filter(issue => {
+                  if (selectedTab === 'OSS Vulnerabilities') {
+                    return issue.vulnerability && issue.vulnerability.id;
+                  }
+                  return true;
+                }).length;
+                return `${vulnerabilityCount} ${selectedTab === 'Total Vulnerabilities' ? 'total vulnerabilities' : 'vulnerabilities'}`;
+              })()}
             </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <input
+                type="search"
+                placeholder="Search vulnerabilities..."
+                className="risk-assessment-search"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             <select className="filter-dropdown">
               <option>Filter by Application: All</option>
             </select>
+            </div>
           </div>
           {selectedTab === 'Total Vulnerabilities' ? renderSBOMScannerContent() : renderIssuesTable()}
         </div>
 
         {selectedIssue && (
-          <div 
-            className={`risk-assessment-right ${isResizing ? 'resizing' : ''}`}
-            style={{ width: `${detailPanelWidth}px` }}
-            ref={detailPanelRef}
-          >
-            <div 
-              className="risk-assessment-resize-handle"
-              onMouseDown={handleResizeStart}
-            />
+          <div className="risk-assessment-right">
             <div className="vulnerability-details">
               <div className="vulnerability-header">
                 <div className="vulnerability-title">
@@ -1528,7 +1742,6 @@ const RiskAssessment = () => {
                     <span className="vulnerability-type">{selectedIssue.type} vulnerability</span>
                   </div>
                 </div>
-                <button className="btn-close" onClick={() => setSelectedIssue(null)}>×</button>
               </div>
 
               <div className="vulnerability-info">
@@ -1629,6 +1842,390 @@ const RiskAssessment = () => {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* OSS Vulnerabilities Detail Drawer */}
+        {selectedOssIssue && (
+          <div className={`oss-detail-drawer ${selectedOssIssue ? 'is-open' : ''}`}>
+            <div 
+              className="oss-detail-drawer__backdrop"
+              onClick={() => {
+                setSelectedOssIssue(null);
+                setCurrentPathIndex(0); // 경로 인덱스 초기화
+              }}
+            />
+            <aside className="oss-detail-drawer__panel" role="dialog" aria-modal="true">
+              <header className="oss-detail-drawer__header">
+                <div>
+                  <p className="oss-detail-drawer__eyebrow">OSS Vulnerability</p>
+                  <h2 className="oss-detail-drawer__title">
+                    {selectedOssIssue.vulnerability?.cve || selectedOssIssue.vulnerability?.id || 'Unknown'}
+                  </h2>
+      </div>
+                <button 
+                  type="button" 
+                  className="oss-detail-drawer__close"
+                  onClick={() => {
+                    setSelectedOssIssue(null);
+                    setCurrentPathIndex(0); // 경로 인덱스 초기화
+                  }}
+                  aria-label="Close details"
+                >
+                  &times;
+                </button>
+              </header>
+              <div className="oss-detail-drawer__content">
+                <section className="oss-detail-drawer__section">
+                  <h3>Vulnerability Information</h3>
+                  <div className="oss-detail-drawer__info-grid">
+                    <div className="oss-detail-drawer__info-item">
+                      <span className="oss-detail-drawer__info-label">Severity</span>
+                      <span className="oss-detail-drawer__info-value">
+                        <span className={`severity-pill severity-pill--${(selectedOssIssue.vulnerability?.severity || 'unknown').toLowerCase()}`}>
+                          {(selectedOssIssue.vulnerability?.severity || 'unknown').toUpperCase()}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="oss-detail-drawer__info-item">
+                      <span className="oss-detail-drawer__info-label">Vulnerable Package</span>
+                      <span className="oss-detail-drawer__info-value">
+                        {selectedOssIssue.package?.name || 'Unknown'}
+                      </span>
+                    </div>
+                    <div className="oss-detail-drawer__info-item">
+                      <span className="oss-detail-drawer__info-label">Current Version</span>
+                      <span className="oss-detail-drawer__info-value">
+                        {selectedOssIssue.package?.current_version || '-'}
+                      </span>
+                    </div>
+                    <div className="oss-detail-drawer__info-item">
+                      <span className="oss-detail-drawer__info-label">CVSS Score</span>
+                      <span className="oss-detail-drawer__info-value">
+                        {selectedOssIssue.vulnerability?.cvss ? selectedOssIssue.vulnerability.cvss.toFixed(1) : '-'}
+                      </span>
+                    </div>
+                    <div className="oss-detail-drawer__info-item">
+                      <span className="oss-detail-drawer__info-label">Fix Version</span>
+                      <span className="oss-detail-drawer__info-value" style={{ color: '#28a745', fontWeight: 600 }}>
+                        {selectedOssIssue.package?.fixed_version || 
+                         (Array.isArray(selectedOssIssue.package?.all_fixed_versions) && selectedOssIssue.package.all_fixed_versions.length > 0
+                          ? selectedOssIssue.package.all_fixed_versions[0]
+                          : '-')}
+                      </span>
+                    </div>
+                    <div className="oss-detail-drawer__info-item">
+                      <span className="oss-detail-drawer__info-label">Dependency Type</span>
+                      <span className="oss-detail-drawer__info-value">
+                        {(() => {
+                          const depType = (selectedOssIssue.package?.dependency_type || '').toLowerCase();
+                          let label = 'Unknown';
+                          let className = 'dependency-pill dependency-pill--unknown';
+                          
+                          if (depType === 'direct') {
+                            label = 'Direct';
+                            className = 'dependency-pill dependency-pill--direct';
+                          } else if (depType === 'transitive') {
+                            label = 'Transitive';
+                            className = 'dependency-pill dependency-pill--transitive';
+                          } else if (depType === 'stdlib') {
+                            label = 'Stdlib';
+                            className = 'dependency-pill dependency-pill--stdlib';
+                          } else if (depType) {
+                            label = depType.charAt(0).toUpperCase() + depType.slice(1);
+                            className = `dependency-pill dependency-pill--${depType}`;
+                          }
+                          
+                          return (
+                            <span className={className}>
+                              {label}
+                            </span>
+                          );
+                        })()}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {(() => {
+                    // vulnerability.title을 우선적으로 사용 (헤더에 있던 내용)
+                    let displayText = selectedOssIssue.vulnerability?.title || '';
+                    
+                    // title이 없으면 summary 사용
+                    if (!displayText) {
+                      displayText = selectedOssIssue.vulnerability?.summary || '';
+                    }
+                    
+                    // summary도 없으면 description에서 Summary 섹션 추출
+                    if (!displayText && selectedOssIssue.vulnerability?.description) {
+                      const description = selectedOssIssue.vulnerability.description;
+                      // "## Summary" 또는 "### Summary" 섹션 추출
+                      const summaryMatch = description.match(/#{1,3}\s*Summary\s*\n\n([\s\S]*?)(?=\n##|\n###|$)/i);
+                      if (summaryMatch && summaryMatch[1]) {
+                        displayText = summaryMatch[1].trim();
+                      } else {
+                        // Summary 섹션이 없으면 전체 description 사용
+                        displayText = description;
+                      }
+                    }
+                    
+                    if (!displayText) return null;
+                    
+                    // summarizeDescription 함수: 첫 문장만 추출 (180자 제한)
+                    const summarizeDescription = (text) => {
+                      if (!text) return '';
+                      const cleaned = String(text)
+                        .replace(/\r/g, '')
+                        .split(/\n+/)
+                        .map(line => line.trim())
+                        .filter(Boolean)
+                        .join(' ')
+                        .replace(/\s+/g, ' ');
+                      
+                      if (!cleaned) return '';
+                      
+                      const sentenceMatch = cleaned.match(/.+?[.!?](?:\s|$)/);
+                      const firstSentence = sentenceMatch ? sentenceMatch[0].trim() : cleaned;
+                      
+                      if (firstSentence.length <= 180) return firstSentence;
+                      return `${firstSentence.slice(0, 177)}…`;
+                    };
+                    
+                    const finalText = summarizeDescription(displayText);
+                    
+                    return (
+                      <div className="oss-detail-drawer__description-info">
+                        <div className="oss-detail-drawer__info-item oss-detail-drawer__info-item--description">
+                          <span className="oss-detail-drawer__info-label">Description</span>
+                          <span className="oss-detail-drawer__info-value">
+                            {finalText}
+                          </span>
+                        </div>
+      </div>
+    );
+                  })()}
+
+                  {selectedOssIssue.vulnerability?.reference_url && (
+                    <div className="oss-detail-drawer__info-grid oss-detail-drawer__info-grid--bottom">
+                      <div className="oss-detail-drawer__info-item oss-detail-drawer__info-item--reference">
+                        <span className="oss-detail-drawer__info-label">Reference</span>
+                        <span className="oss-detail-drawer__info-value">
+                          <a 
+                            href={selectedOssIssue.vulnerability.reference_url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="oss-detail-drawer__reference-link"
+                          >
+                            {selectedOssIssue.vulnerability.reference_url}
+                          </a>
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </section>
+
+                <section className="oss-detail-drawer__section">
+                  <h3>Reachability Analysis</h3>
+                  <div className="oss-detail-drawer__reachability-container">
+                    {selectedOssIssue.reachable ? (
+                      <div className="reachability-alert reachability-alert--reachable">
+                        <span>↺ The vulnerable package is reachable in this service{(() => {
+                          const rawData = selectedOssIssue.rawData || selectedOssIssue;
+                          const functions = rawData.functions || [];
+                          const reachablePaths = functions
+                            .filter(f => f.reachable === true && f.reachability_path && f.reachability_path.length > 0)
+                            .flatMap(f => f.reachability_path || []);
+                          const pathCount = reachablePaths.length;
+                          return pathCount > 0 ? ` through ${pathCount} path${pathCount > 1 ? 's' : ''}` : '';
+                        })()}.</span>
+                      </div>
+                    ) : selectedOssIssue.reachable === false ? (
+                      <div className="reachability-alert reachability-alert--safe">
+                        <span>Ø No reachable path found in this service.</span>
+                      </div>
+                    ) : (
+                      <div className="reachability-alert">
+                        <span>Reachability information is not available.</span>
+                      </div>
+                    )}
+                    {/* Reachability Path 표시 */}
+                    {(() => {
+                      const rawData = selectedOssIssue.rawData || selectedOssIssue;
+                      const functions = rawData.functions || [];
+                      
+                      // buildReachabilityInfo와 동일한 로직
+                      const paths = [];
+                      functions.forEach(fn => {
+                        const pathList = Array.isArray(fn.reachability_path) ? fn.reachability_path : [];
+                        pathList.forEach(path => {
+                          if (!Array.isArray(path) || !path.length) return;
+                          const steps = path.map(node => {
+                            // functionName 추출: ::로 분리된 마지막 부분만
+                            let functionName = node.function || node.method || '';
+                            if (functionName.includes('::')) {
+                              const parts = functionName.split('::');
+                              functionName = parts[parts.length - 1];
+                            }
+                            
+                            // packageName 추출: node.file에서 실제 패키지명 추출
+                            let packageName = '';
+                            const file = node.file || '';
+                            
+                            // node.file에서 node_modules/ 패키지명 추출
+                            if (file.includes('node_modules/')) {
+                              const match = file.match(/node_modules\/([^/]+)/);
+                              if (match) {
+                                packageName = match[1];
+                              }
+                            }
+                            
+                            // node.file에 패키지명이 없으면 node.package에서 추출 시도
+                            if (!packageName) {
+                              const rawPackage = node.package || node.module || '';
+                              if (rawPackage) {
+                                // @notionhq/notion-mcp-server -> notion-mcp-server
+                                if (rawPackage.startsWith('@')) {
+                                  const parts = rawPackage.split('/');
+                                  if (parts.length > 1) {
+                                    packageName = parts[parts.length - 1];
+                                  } else {
+                                    packageName = rawPackage;
+                                  }
+                                } else {
+                                  packageName = rawPackage;
+                                }
+                              }
+                            }
+                            
+                            return {
+                              functionName: functionName,
+                              file: file,
+                              packageName: packageName,
+                              module: node.module || '',
+                              service: node.service || '',
+                              type: node.type || ''
+                            };
+                          });
+                          paths.push({
+                            reachable: fn.reachable === true,
+                            steps
+                          });
+                        });
+                      });
+                      
+                      if (paths.length === 0) return null;
+                      
+                      const targetPackage = selectedOssIssue.package?.name || '';
+                      
+                      // inferReachabilityStepType 함수
+                      const inferStepType = (step, index, total) => {
+                        const normalizedTarget = targetPackage.toLowerCase();
+                        const packageName = step.packageName ? step.packageName.toLowerCase() : '';
+                        
+                        if (index === total - 1) {
+                          return { label: 'Vulnerable package', marker: 'vulnerable' };
+                        }
+                        
+                        if (normalizedTarget && packageName && packageName === normalizedTarget) {
+                          return { label: 'Direct package', marker: 'package' };
+                        }
+                        
+                        if (index === 0) {
+                          return { label: 'Entry point', marker: 'entry' };
+                        }
+                        
+                        if (step.packageName) {
+                          return { label: 'Direct package', marker: 'package' };
+                        }
+                        
+                        return { label: 'Call', marker: 'call' };
+                      };
+                      
+                      // 현재 인덱스의 path 표시
+                      const currentPath = paths[currentPathIndex] || paths[0];
+                      if (!currentPath || !currentPath.steps || currentPath.steps.length === 0) return null;
+                      
+                      const totalPaths = paths.length;
+                      const canGoPrev = currentPathIndex > 0;
+                      const canGoNext = currentPathIndex < totalPaths - 1;
+                      
+                      return (
+                        <div className="reachability-view" style={{ marginTop: '24px' }}>
+                          {/* Reachable functions와 경로 네비게이션 버튼 */}
+                          <div className="reachability-view__header">
+                            {selectedOssIssue.reachable_functions !== undefined && (
+                              <div className="reachability-view__functions-count">
+                                Reachable functions: {selectedOssIssue.reachable_functions} / {selectedOssIssue.functions_count || 0}
+                              </div>
+                            )}
+                            {totalPaths > 1 && (
+                              <div className="reachability-view__navigation">
+                                <button
+                                  onClick={() => setCurrentPathIndex(prev => Math.max(0, prev - 1))}
+                                  disabled={!canGoPrev}
+                                >
+                                  &lt;
+                                </button>
+                                <span>
+                                  {currentPathIndex + 1} / {totalPaths}
+                                </span>
+                                <button
+                                  onClick={() => setCurrentPathIndex(prev => Math.min(totalPaths - 1, prev + 1))}
+                                  disabled={!canGoNext}
+                                >
+                                  &gt;
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <ol className="reachability-steps">
+                            {currentPath.steps.map((step, idx) => {
+                              const typeInfo = inferStepType(step, idx, currentPath.steps.length);
+                              // 제목은 함수명만 표시 (이미 steps 생성 시 추출됨)
+                              const title = step.functionName || 'Anonymous function';
+                              
+                              // 메타 정보: 파일 경로와 실제 패키지명
+                              const metaParts = [];
+                              if (step.file) {
+                                metaParts.push(step.file);
+                              }
+                              // packageName은 항상 표시 (중간 단계에도 패키지명 표시)
+                              if (step.packageName) {
+                                metaParts.push(step.packageName);
+                              }
+                              
+                              return (
+                                <li key={`step-${idx}`} className="reachability-step">
+                                  <div className="reachability-step__timeline">
+                                    <span className={`reachability-step__marker reachability-step__marker--${typeInfo.marker}`}></span>
+                                    {idx < currentPath.steps.length - 1 && <span className="reachability-step__line"></span>}
+                                  </div>
+                                  <div className="reachability-step__content">
+                                    <span className={`reachability-step__badge reachability-step__badge--${typeInfo.marker}`}>
+                                      {typeInfo.label}
+                                    </span>
+                                    <span className="reachability-step__title">{title}</span>
+                                    {metaParts.length > 0 && (
+                                      <span className="reachability-step__meta">
+                                        {metaParts.map((part, i) => (
+                                          <span key={i}>
+                                            {part}
+                                            {i < metaParts.length - 1 && <span className="reachability-step__meta-separator">•</span>}
+                                          </span>
+                                        ))}
+                                      </span>
+                                    )}
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ol>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </section>
+              </div>
+            </aside>
           </div>
         )}
       </div>
