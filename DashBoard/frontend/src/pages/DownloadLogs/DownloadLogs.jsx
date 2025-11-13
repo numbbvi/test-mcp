@@ -5,26 +5,49 @@ import './DownloadLogs.css';
 const DownloadLogs = () => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ username: '' });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTeam, setSelectedTeam] = useState('');
+  const [teams, setTeams] = useState([]);
+  const [teamDropdownOpen, setTeamDropdownOpen] = useState(false);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0 });
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState(null);
 
+  // 팀 목록 가져오기
+  useEffect(() => {
+    fetchTeams();
+  }, []);
+
   useEffect(() => {
     setPagination(prev => ({ ...prev, page: 1 }));
-  }, [filters.username]);
+  }, [searchQuery, selectedTeam]);
 
   useEffect(() => {
     fetchLogs();
-  }, [filters, pagination.page]);
+  }, [searchQuery, selectedTeam, pagination.page]);
+
+  const fetchTeams = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/file/download-logs/teams');
+      const data = await res.json();
+      if (data.success) {
+        setTeams(data.data || []);
+      }
+    } catch (error) {
+      console.error('팀 목록 조회 실패:', error);
+    }
+  };
 
   const fetchLogs = async () => {
     try {
       setLoading(true);
       
       const queryParams = new URLSearchParams();
-      if (filters.username) {
-        queryParams.append('username', filters.username);
+      if (searchQuery) {
+        queryParams.append('search', searchQuery);
+      }
+      if (selectedTeam) {
+        queryParams.append('team', selectedTeam);
       }
       queryParams.append('page', pagination.page);
       queryParams.append('limit', '20');
@@ -157,18 +180,74 @@ const DownloadLogs = () => {
 
   return (
     <section className="download-logs">
-      <h1>Download Logs</h1>
+      <div className="download-logs-header">
+        <h1>Download Logs</h1>
+        <button onClick={() => fetchLogs()} className="btn-refresh">새로고침</button>
+      </div>
 
       <div className="filters">
-        <div className="filter-item">
+        <div className="search-container">
+          <svg className="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
           <input
             type="text"
-            value={filters.username}
-            onChange={(e) => setFilters({ ...filters, username: e.target.value })}
-            placeholder="사용자 이름"
+            className="search-input"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="사용자 또는 사원번호 검색"
           />
         </div>
-        <button onClick={() => fetchLogs()} className="btn-refresh">새로고침</button>
+
+        <div className="controls-right">
+          <div className="sort-dropdown">
+            <button 
+              className="sort-button" 
+              onClick={(e) => {
+                e.stopPropagation();
+                setTeamDropdownOpen(!teamDropdownOpen);
+              }}
+            >
+              {selectedTeam || '전체 팀'}
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+            {teamDropdownOpen && (
+              <>
+                <div 
+                  className="sort-menu-overlay"
+                  onClick={() => setTeamDropdownOpen(false)}
+                />
+                <div className={`sort-menu ${teamDropdownOpen ? 'open' : ''}`}>
+                  <div className="sort-menu-header">팀 선택</div>
+                  <button 
+                    className={`sort-option ${selectedTeam === '' ? 'selected' : ''}`}
+                    onClick={() => {
+                      setSelectedTeam('');
+                      setTeamDropdownOpen(false);
+                    }}
+                  >
+                    전체 팀
+                  </button>
+                  {teams.map((team) => (
+                    <button 
+                      key={team}
+                      className={`sort-option ${selectedTeam === team ? 'selected' : ''}`}
+                      onClick={() => {
+                        setSelectedTeam(team);
+                        setTeamDropdownOpen(false);
+                      }}
+                    >
+                      {team}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="logs-table-container">
@@ -217,4 +296,3 @@ const DownloadLogs = () => {
 };
 
 export default DownloadLogs;
-

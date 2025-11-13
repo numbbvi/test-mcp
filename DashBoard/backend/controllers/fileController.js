@@ -122,7 +122,7 @@ const fileController = {
   // 다운로드 로그 조회 (관리자용)
   getDownloadLogs: (req, res) => {
     try {
-      const { username, page = 1, limit = 20 } = req.query;
+      const { username, search, team, page = 1, limit = 20 } = req.query;
       const pageNum = parseInt(page);
       const limitNum = parseInt(limit);
       const offset = (pageNum - 1) * limitNum;
@@ -131,10 +131,24 @@ const fileController = {
       let dataQuery = 'SELECT dl.*, u.username, u.employee_id, u.team, ms.name as mcp_server_name FROM download_logs dl LEFT JOIN users u ON dl.user_id = u.id LEFT JOIN mcp_servers ms ON dl.mcp_server_id = ms.id WHERE 1=1';
       const params = [];
       
-      if (username) {
+      // search 파라미터가 있으면 username 또는 employee_id로 검색
+      if (search) {
+        countQuery += ' AND (u.username LIKE ? OR u.employee_id LIKE ?)';
+        dataQuery += ' AND (u.username LIKE ? OR u.employee_id LIKE ?)';
+        const searchPattern = `%${search}%`;
+        params.push(searchPattern, searchPattern);
+      } else if (username) {
+        // 기존 username 파라미터 지원 (하위 호환성)
         countQuery += ' AND u.username LIKE ?';
         dataQuery += ' AND u.username LIKE ?';
         params.push(`%${username}%`);
+      }
+      
+      // team 필터링
+      if (team) {
+        countQuery += ' AND u.team = ?';
+        dataQuery += ' AND u.team = ?';
+        params.push(team);
       }
       
       dataQuery += ' ORDER BY dl.downloaded_at DESC LIMIT ? OFFSET ?';
@@ -159,6 +173,30 @@ const fileController = {
       res.status(500).json({
         success: false,
         message: '로그 조회 중 오류가 발생했습니다.'
+      });
+    }
+  },
+
+  // 다운로드 로그에서 팀 목록 가져오기
+  getTeams: (req, res) => {
+    try {
+      const teams = db.prepare(`
+        SELECT DISTINCT u.team 
+        FROM download_logs dl 
+        LEFT JOIN users u ON dl.user_id = u.id 
+        WHERE u.team IS NOT NULL AND u.team != ''
+        ORDER BY u.team
+      `).all();
+      
+      res.json({
+        success: true,
+        data: teams.map(t => t.team)
+      });
+    } catch (error) {
+      console.error('팀 목록 조회 오류:', error);
+      res.status(500).json({
+        success: false,
+        message: '팀 목록 조회 중 오류가 발생했습니다.'
       });
     }
   }

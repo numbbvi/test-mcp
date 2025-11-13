@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './RiskAssessment.css';
 
 const RiskAssessment = () => {
@@ -23,6 +23,9 @@ const RiskAssessment = () => {
   const [ossIssues, setOssIssues] = useState([]);
   const [sbomScannerData, setSbomScannerData] = useState([]);
   const [toolValidationIssues, setToolValidationIssues] = useState([]);
+  const [detailPanelWidth, setDetailPanelWidth] = useState(600);
+  const [isResizing, setIsResizing] = useState(false);
+  const detailPanelRef = useRef(null);
 
   // 스캔 결과를 Risk Assessment 형식으로 변환
   const formatScanResults = (findings) => {
@@ -562,6 +565,38 @@ const RiskAssessment = () => {
       window.removeEventListener('keydown', handleEscape);
     };
   }, [selectedIssue]);
+
+  // Resize 기능
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e) => {
+      if (!isResizing) return;
+      const newWidth = window.innerWidth - e.clientX;
+      const minWidth = 400;
+      const maxWidth = window.innerWidth * 0.9;
+      if (newWidth >= minWidth && newWidth <= maxWidth) {
+        setDetailPanelWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  const handleResizeStart = (e) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
 
 
   // 심각도 점수 계산 함수 (CVSS 점수 우선, 없으면 심각도 텍스트를 점수로 변환)
@@ -1139,7 +1174,7 @@ const RiskAssessment = () => {
                 <input
                   type="text"
                   className="search-input"
-                  placeholder="Search servers"
+                  placeholder="Search Servers"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -1161,8 +1196,8 @@ const RiskAssessment = () => {
                     분석 시간
                     {getSortIcon('analysis_timestamp')}
                   </th>
-                  <th>Run Analysis</th>
-                  <th></th>
+                  <th>위험도 산정</th>
+                  <th>상세보기</th>
                 </tr>
               </thead>
               <tbody>
@@ -1476,7 +1511,15 @@ const RiskAssessment = () => {
         </div>
 
         {selectedIssue && (
-          <div className="risk-assessment-right">
+          <div 
+            className={`risk-assessment-right ${isResizing ? 'resizing' : ''}`}
+            style={{ width: `${detailPanelWidth}px` }}
+            ref={detailPanelRef}
+          >
+            <div 
+              className="risk-assessment-resize-handle"
+              onMouseDown={handleResizeStart}
+            />
             <div className="vulnerability-details">
               <div className="vulnerability-header">
                 <div className="vulnerability-title">
@@ -1485,6 +1528,7 @@ const RiskAssessment = () => {
                     <span className="vulnerability-type">{selectedIssue.type} vulnerability</span>
                   </div>
                 </div>
+                <button className="btn-close" onClick={() => setSelectedIssue(null)}>×</button>
               </div>
 
               <div className="vulnerability-info">

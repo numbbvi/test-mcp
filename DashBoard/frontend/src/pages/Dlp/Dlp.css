@@ -35,6 +35,161 @@
   letter-spacing: -0.02em;
 }
 
+.dlp-controls {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.search-container {
+  flex: 1;
+  min-width: 520px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 14px;
+  color: #8b8b8b;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.search-input {
+  width: 100%;
+  padding: 12px 16px 12px 40px;
+  background: #ffffff;
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  color: #1a1a1a;
+  font-size: 0.875rem;
+  font-weight: 400;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #003153;
+  box-shadow: 0 0 0 3px rgba(0, 49, 83, 0.1);
+  background: #ffffff;
+}
+
+.search-input::placeholder {
+  color: #8b8b8b;
+  font-weight: 400;
+}
+
+/* 드롭다운 스타일 (MCP Registry와 완전히 동일) */
+.controls-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sort-dropdown {
+  position: relative;
+}
+
+.sort-menu-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 99;
+}
+
+.sort-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #ffffff;
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  color: #1a1a1a;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.sort-button:hover {
+  background: #fafbfc;
+  border-color: #003153;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.sort-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: #ffffff;
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  min-width: 200px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-8px);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.sort-menu.open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.sort-menu-header {
+  padding: 12px 16px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #6b7280;
+  border-bottom: 1px solid #e1e4e8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sort-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  color: #1a1a1a;
+  font-size: 0.875rem;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.sort-option:hover {
+  background: #f9fafb;
+}
+
+.sort-option.selected {
+  color: #003153;
+  font-weight: 500;
+  background: #f0f7ff;
+}
+
+.sort-option.selected svg {
+  flex-shrink: 0;
+}
+
 .filters {
   display: flex;
   gap: 16px;
@@ -100,7 +255,7 @@
 }
 
 .dlp-table-wrapper {
-  margin: 0 32px 32px 32px;
+  margin: 0 0px 32px 0px;
   overflow-x: auto;
   background: #f5f5f5;
   border-radius: 8px;
@@ -222,47 +377,87 @@
 
 .btn-view-detail {
   padding: 6px 12px;
-  background: #003153;
-  color: #fff;
-  border: none;
-  border-radius: 4px;
+  background: #fff;
+  color: var(--muted);
+  border: 1.5px solid rgba(0, 49, 83, 0.25);
+  border-radius: 6px;
   cursor: pointer;
   font-size: 0.85rem;
   font-weight: 500;
-  transition: background 0.2s;
+  width: 100%;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .btn-view-detail:hover {
-  background: #002640;
+  background: rgba(0, 49, 83, 0.08);
+  color: #003153;
+  border-color: rgba(0, 49, 83, 0.45);
+}
+
+/* 표 내부 버튼 스타일 통일 */
+.dlp-table .btn-view-detail,
+.dlp-table td .btn-view-detail {
+  padding: 6px 12px !important;
+  font-size: 0.85rem !important;
+  font-weight: 500 !important;
+  width: 100% !important;
 }
 
 /* 오른쪽 사이드바 스타일 */
 .dlp-right {
-  position: absolute;
-  top: 0;
+  position: fixed;
+  top: 44px;
   right: 0;
   width: 600px;
+  min-width: 400px;
+  max-width: 90vw;
   overflow-y: auto;
   background: #ffffff;
-  height: 100vh;
+  height: calc(100vh - 44px);
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
   z-index: 10;
-  border-left: 1px solid #e0e0e0;
+  display: flex;
+  flex-direction: column;
+}
+
+.dlp-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 11;
+  background: transparent;
+  transition: background 0.2s;
+}
+
+.dlp-right:hover .dlp-resize-handle {
+  background: rgba(0, 49, 83, 0.1);
+}
+
+.dlp-right.resizing .dlp-resize-handle {
+  background: rgba(0, 49, 83, 0.2);
 }
 
 .dlp-detail-content {
-  padding: 32px;
+  padding: 0;
   max-width: 100%;
   word-wrap: break-word;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .dlp-detail-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
-  padding-bottom: 20px;
+  padding: 20px 28px;
   border-bottom: 1px solid #e0e0e0;
+  background: #f5f5f5;
+  flex-shrink: 0;
 }
 
 .dlp-detail-title h2 {
@@ -275,8 +470,8 @@
 .btn-close {
   background: none;
   border: none;
-  font-size: 28px;
-  color: #003153;
+  font-size: 24px;
+  color: #666;
   cursor: pointer;
   padding: 0;
   width: 32px;
@@ -285,15 +480,19 @@
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  transition: background 0.2s;
+  transition: background 0.2s, color 0.2s;
+  line-height: 1;
 }
 
 .btn-close:hover {
-  background: rgba(0, 49, 83, 0.1);
+  background: rgba(0, 0, 0, 0.1);
+  color: #333;
 }
 
 .dlp-detail-body {
-  padding: 0;
+  padding: 28px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .detail-section {

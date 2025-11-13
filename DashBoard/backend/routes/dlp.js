@@ -21,5 +21,8 @@ router.put('/logs/:id/status', dlpController.updateLogStatus);
 // DLP 로그 실시간 스트림 (SSE)
 router.get('/logs/stream', dlpController.streamLogs);
 
+// DLP 위반 유형 목록 가져오기
+router.get('/violation-types', dlpController.getViolationTypes);
+
 module.exports = router;
 

@@ -134,7 +134,7 @@ const MCPRegistry = () => {
           <input
             type="text"
             className="search-input"
-            placeholder="Search servers"
+            placeholder="Search Servers"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />

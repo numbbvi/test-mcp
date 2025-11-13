@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Pagination from '../../components/Pagination';
 import './RequestBoard.css';
@@ -24,6 +24,9 @@ const RequestBoard = () => {
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [detailPanelWidth, setDetailPanelWidth] = useState(600);
+  const [isResizing, setIsResizing] = useState(false);
+  const detailPanelRef = useRef(null);
 
   useEffect(() => {
     // 로그인한 사용자 정보 가져오기
@@ -56,6 +59,38 @@ const RequestBoard = () => {
       window.removeEventListener('keydown', handleEscape);
     };
   }, [selectedRequest]);
+
+  // Resize 기능
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e) => {
+      if (!isResizing) return;
+      const newWidth = window.innerWidth - e.clientX;
+      const minWidth = 400;
+      const maxWidth = window.innerWidth * 0.9;
+      if (newWidth >= minWidth && newWidth <= maxWidth) {
+        setDetailPanelWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  const handleResizeStart = (e) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
 
   const fetchRequests = async () => {
     try {
@@ -647,7 +682,7 @@ const RequestBoard = () => {
           <input
             type="text"
             className="search-input"
-            placeholder="Search servers"
+            placeholder="Search Servers"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -732,7 +767,15 @@ const RequestBoard = () => {
       </div>
 
       {selectedRequest && (
-        <div className="request-board-right">
+        <div 
+          className={`request-board-right ${isResizing ? 'resizing' : ''}`}
+          style={{ width: `${detailPanelWidth}px` }}
+          ref={detailPanelRef}
+        >
+          <div 
+            className="request-board-resize-handle"
+            onMouseDown={handleResizeStart}
+          />
           <div className="request-detail-content">
             <div className="request-detail-header">
               <div className="request-detail-title">

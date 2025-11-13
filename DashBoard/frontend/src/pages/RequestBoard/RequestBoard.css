@@ -273,32 +273,60 @@
 
 /* 오른쪽 사이드바 스타일 */
 .request-board-right {
-  position: absolute;
-  top: 0;
+  position: fixed;
+  top: 44px;
   right: 0;
   width: 600px;
+  min-width: 400px;
+  max-width: 90vw;
   overflow-y: auto;
-  background: #f5f5f5;
-  height: 100vh;
+  background: #ffffff;
+  height: calc(100vh - 44px);
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
   z-index: 10;
-  border-left: 1px solid #e0e0e0;
+  display: flex;
+  flex-direction: column;
+}
+
+.request-board-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 11;
+  background: transparent;
+  transition: background 0.2s;
+}
+
+.request-board-right:hover .request-board-resize-handle {
+  background: rgba(0, 49, 83, 0.1);
+}
+
+.request-board-right.resizing .request-board-resize-handle {
+  background: rgba(0, 49, 83, 0.2);
 }
 
 .request-detail-content {
-  padding: 32px;
+  padding: 0;
   max-width: 100%;
   word-wrap: break-word;
   background-color: #ffffff;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .request-detail-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
-  padding-bottom: 20px;
+  padding: 20px 28px;
   border-bottom: 1px solid #e0e0e0;
+  background: #f5f5f5;
+  flex-shrink: 0;
 }
 
 .request-detail-title h2 {
@@ -311,8 +339,8 @@
 .btn-close {
   background: none;
   border: none;
-  font-size: 28px;
-  color: #003153;
+  font-size: 24px;
+  color: #666;
   cursor: pointer;
   padding: 0;
   width: 32px;
@@ -321,15 +349,19 @@
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  transition: background 0.2s;
+  transition: background 0.2s, color 0.2s;
+  line-height: 1;
 }
 
 .btn-close:hover {
-  background: rgba(0, 49, 83, 0.1);
+  background: rgba(0, 0, 0, 0.1);
+  color: #333;
 }
 
 .request-detail-body {
-  padding: 0;
+  padding: 28px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 /* Tool 스캔 결과 모달 (기존 모달 스타일 유지) */
