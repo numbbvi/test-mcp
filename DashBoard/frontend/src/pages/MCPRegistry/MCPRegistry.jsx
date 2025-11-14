@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Pagination from '../../components/Pagination';
 import MCPRegistryDetail from './MCPRegistryDetail';
+import { apiGet } from '../../utils/api';
 import './MCPRegistry.css';
 
 const MCPRegistry = () => {
@@ -30,26 +31,34 @@ const MCPRegistry = () => {
       
       const savedUser = localStorage.getItem('user');
       let userTeam = null;
+      let isAdmin = false;
       
       if (savedUser) {
         const user = JSON.parse(savedUser);
         userTeam = user.team || null;
+        // admin 체크
+        const userRoles = user.roles || [];
+        isAdmin = Array.isArray(userRoles) 
+          ? userRoles.includes('admin') 
+          : userRoles === 'admin' || user.role === 'admin';
       }
       
       const queryParams = new URLSearchParams();
-      if (userTeam) {
+      // admin이 아니면 팀 필터 적용
+      if (userTeam && !isAdmin) {
         queryParams.append('team', userTeam);
       }
       queryParams.append('status', 'approved'); // MCP Registry는 승인된 서버만 표시
       // 클라이언트 측에서 검색 필터링 및 페이징을 처리하기 위해 모든 데이터를 가져옴
       queryParams.append('limit', '10000');
       
-      const res = await fetch(`http://localhost:3001/api/marketplace?${queryParams}`);
-      const data = await res.json();
+      const data = await apiGet(`/marketplace?${queryParams}`);
+      console.log('서버 목록 응답:', data);
       
       if (data.success) {
         let servers = data.data || [];
-        
+        console.log('서버 목록:', servers);
+
         // 검색 전 전체 서버 개수 저장
         setTotalServers(servers.length);
         

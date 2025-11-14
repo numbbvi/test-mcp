@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { API_BASE_URL } from '../../utils/api';
 import './DownloadLogs.css';
 
 const DownloadLogs = () => {
@@ -29,7 +30,7 @@ const DownloadLogs = () => {
       queryParams.append('page', page);
       queryParams.append('limit', '20');
       
-      const res = await fetch(`http://localhost:3001/api/file/download-logs?${queryParams}`);
+      const res = await fetch(`${API_BASE_URL}/file/download-logs?${queryParams}`);
       const data = await res.json();
       
       if (data.success) {

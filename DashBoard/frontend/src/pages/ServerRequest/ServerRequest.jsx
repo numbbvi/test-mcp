@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiPostForm } from '../../utils/api';
+import { apiPost, API_BASE_URL } from '../../utils/api';
 import './ServerRequest.css';
 
 const ServerRequest = () => {
@@ -9,7 +9,8 @@ const ServerRequest = () => {
     connection: '', 
     github: '', 
     file: null,
-    image: null
+    image: null,
+    auth_token: ''
   });
   const [imagePreview, setImagePreview] = useState(null);
   const [showRequestForm, setShowRequestForm] = useState(false);
@@ -89,6 +90,9 @@ const ServerRequest = () => {
       formData.append('connection', form.connection || '');
       formData.append('github', form.github);
       formData.append('user_id', user.id);
+      if (form.auth_token) {
+        formData.append('auth_token', form.auth_token);
+      }
       if (form.file) {
         formData.append('file', form.file);
       }
@@ -96,28 +100,37 @@ const ServerRequest = () => {
         formData.append('image', form.image);
       }
 
-      const data = await apiPostForm('/marketplace/request', formData);
+      const res = await fetch(`${API_BASE_URL}/marketplace/request`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: formData
+      });
+
+      // 응답이 JSON인지 확인
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`서버 오류 (${res.status}): ${text.substring(0, 200)}`);
+      }
+
+      const data = await res.json();
       if (data.success) {
         alert(data.message || '등록 요청이 접수되었습니다.');
         setShowRequestForm(false);
-        setForm({ name: '', description: '', connection: '', github: '', file: null, image: null });
+        setForm({ name: '', description: '', connection: '', github: '', file: null, image: null, auth_token: '' });
         setImagePreview(null);
       } else {
         alert(data.message || '등록 요청 실패');
       }
     } catch (error) {
       console.error('등록 요청 오류:', error);
-      // 백엔드에서 반환한 에러 메시지 표시 (중복 체크 등)
-      if (error.message) {
-        // 네트워크 오류인 경우
-        if (error.message.includes('서버에 연결할 수 없습니다') || error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-          alert('서버에 연결할 수 없습니다. 네트워크 연결을 확인해주세요.');
-        } else {
-          // 백엔드에서 반환한 에러 메시지 표시 (중복 체크 등)
-          alert(error.message);
-        }
+      // 네트워크 오류인 경우
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        alert('서버에 연결할 수 없습니다. 네트워크 연결을 확인해주세요.');
       } else {
-        alert(`등록 요청 중 오류가 발생했습니다: ${error.toString()}`);
+        alert(`등록 요청 중 오류가 발생했습니다: ${error.message || error.toString()}`);
       }
     } finally {
       setSubmitting(false);
@@ -226,6 +239,20 @@ const ServerRequest = () => {
                 />
                 <small style={{ display: 'block', marginTop: '4px', color: '#666', fontSize: '0.85rem' }}>
                   Github Link 또는 File Upload 중 하나는 필수입니다.
+                </small>
+              </label>
+              <label>
+                <span>Authentication Token (Optional)</span>
+                <input
+                  type="password"
+                  name="auth_token"
+                  value={form.auth_token}
+                  onChange={onChange}
+                  placeholder="서버 인증에 필요한 토큰 (예: GITHUB_PERSONAL_ACCESS_TOKEN, SLACK_MCP_XOXP_TOKEN 등)"
+                  disabled={submitting}
+                />
+                <small style={{ color: '#666', fontSize: '0.85em', marginTop: '4px', display: 'block' }}>
+                  토큰이 필요한 서버의 경우, tool 스캔을 위해 토큰을 입력해주세요.
                 </small>
               </label>
               <label className="file-field">

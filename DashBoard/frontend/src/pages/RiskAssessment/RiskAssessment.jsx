@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import Pagination from '../../components/Pagination';
+import { API_BASE_URL } from '../../utils/api';
 import './RiskAssessment.css';
 
 const RiskAssessment = () => {
@@ -157,7 +158,7 @@ const RiskAssessment = () => {
       const token = localStorage.getItem('token');
       
       // 스캔 시작
-      const res = await fetch('http://localhost:3001/api/risk-assessment/scan-code', {
+      const res = await fetch(`${API_BASE_URL}/risk-assessment/scan-code`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -188,7 +189,7 @@ const RiskAssessment = () => {
       const pollProgress = async () => {
         while (true) {
           try {
-            const progressRes = await fetch(`http://localhost:3001/api/risk-assessment/scan-progress?scan_id=${scanId}`, {
+            const progressRes = await fetch(`${API_BASE_URL}/risk-assessment/scan-progress?scan_id=${scanId}`, {
               headers: {
                 'Authorization': `Bearer ${token}`
               }
@@ -242,7 +243,7 @@ const RiskAssessment = () => {
                   const serverNameParam = server.name ? `&mcp_server_name=${encodeURIComponent(server.name)}` : '';
                   
                   try {
-                    const vulnRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
+                    const vulnRes = await fetch(`${API_BASE_URL}/risk-assessment/code-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
                       headers: {
                         'Authorization': `Bearer ${token}`
                       }
@@ -258,7 +259,7 @@ const RiskAssessment = () => {
                     
                     // OSS Vulnerabilities 로드
                     try {
-                      const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
+                      const ossRes = await fetch(`${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
                         headers: {
                           'Authorization': `Bearer ${token}`
                         }
@@ -292,7 +293,7 @@ const RiskAssessment = () => {
                     
                     // Tool Validation 데이터 로드
                     try {
-                      const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
+                      const toolValidationRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
                         headers: {
                           'Authorization': `Bearer ${token}`
                         }
@@ -333,7 +334,7 @@ const RiskAssessment = () => {
                         // 모든 서버를 가져오기 위해 limit를 매우 큰 값으로 설정
                         statusParam += statusParam.includes('?') ? '&limit=10000' : '?limit=10000';
                         
-                        const res = await fetch(`http://localhost:3001/api/marketplace${statusParam}`, {
+                        const res = await fetch(`${API_BASE_URL}/marketplace${statusParam}`, {
                           headers: {
                             'Authorization': `Bearer ${token}`
                           }
@@ -411,7 +412,7 @@ const RiskAssessment = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('http://localhost:3001/api/risk-assessment/scan-code', {
+      const res = await fetch(`${API_BASE_URL}/risk-assessment/scan-code`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -429,7 +430,7 @@ const RiskAssessment = () => {
         const scanId = data.data?.scan_id || data.scan_id || null;
         if (scanId) {
           try {
-            const vulnRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}`, {
+            const vulnRes = await fetch(`${API_BASE_URL}/risk-assessment/code-vulnerabilities?scan_id=${scanId}`, {
               headers: {
                 'Authorization': `Bearer ${token}`
               }
@@ -445,7 +446,7 @@ const RiskAssessment = () => {
             
             // OSS Vulnerabilities 로드
             try {
-              const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
+              const ossRes = await fetch(`${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
                 headers: {
                   'Authorization': `Bearer ${token}`
                 }
@@ -491,7 +492,7 @@ const RiskAssessment = () => {
         // Tool Validation 데이터 로드
         if (scanId) {
         try {
-            const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
+            const toolValidationRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
@@ -555,7 +556,7 @@ const RiskAssessment = () => {
         // 모든 서버를 가져오기 위해 limit를 매우 큰 값으로 설정
         statusParam += statusParam.includes('?') ? '&limit=10000' : '?limit=10000';
         
-        const res = await fetch(`http://localhost:3001/api/marketplace${statusParam}`, {
+        const res = await fetch(`${API_BASE_URL}/marketplace${statusParam}`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -607,13 +608,13 @@ const RiskAssessment = () => {
           // Code Vulnerabilities 로드
           let codeRes;
           if (scanId) {
-            codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
+            codeRes = await fetch(`${API_BASE_URL}/risk-assessment/code-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
               headers: {
                 'Authorization': `Bearer ${token}`
               }
             });
           } else if (scanPath) {
-            codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}${serverNameParam}`, {
+            codeRes = await fetch(`${API_BASE_URL}/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}${serverNameParam}`, {
               headers: {
                 'Authorization': `Bearer ${token}`
               }
@@ -635,13 +636,13 @@ const RiskAssessment = () => {
           try {
             let ossRes;
             if (scanId) {
-              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
+              ossRes = await fetch(`${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
                 headers: {
                   'Authorization': `Bearer ${token}`
                 }
               });
             } else if (scanPath) {
-              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}${serverNameParam}`, {
+              ossRes = await fetch(`${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}${serverNameParam}`, {
                 headers: {
                   'Authorization': `Bearer ${token}`
                 }
@@ -679,13 +680,13 @@ const RiskAssessment = () => {
           try {
             let toolValidationRes;
             if (scanId) {
-              toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
+              toolValidationRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
                 headers: {
                   'Authorization': `Bearer ${token}`
                 }
               });
             } else if (scanPath) {
-              toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}${serverNameParam}`, {
+              toolValidationRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}${serverNameParam}`, {
                 headers: {
                   'Authorization': `Bearer ${token}`
                 }
@@ -802,7 +803,7 @@ const RiskAssessment = () => {
           if (scanId) {
             // scan_id가 있으면 우선 사용
             console.log('[Tool Validation Report] scan_id로 로드:', scanId);
-            reportRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-reports?scan_id=${scanId}`, {
+            reportRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-reports?scan_id=${scanId}`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
@@ -810,7 +811,7 @@ const RiskAssessment = () => {
           } else if (currentAnalysisUrl) {
             // scan_id가 없으면 scan_path 사용
             console.log('[Tool Validation Report] scan_path로 로드:', currentAnalysisUrl);
-            reportRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-reports?scan_path=${encodeURIComponent(currentAnalysisUrl)}`, {
+            reportRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-reports?scan_path=${encodeURIComponent(currentAnalysisUrl)}`, {
               headers: {
                 'Authorization': `Bearer ${token}`
               }
@@ -846,7 +847,7 @@ const RiskAssessment = () => {
           if (scanId) {
             // scan_id가 있으면 우선 사용
             console.log('[Tool Validation Vulnerabilities] scan_id로 로드:', scanId);
-            vulnerabilitiesRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
+            vulnerabilitiesRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
               headers: {
                 'Authorization': `Bearer ${token}`
               }
@@ -854,7 +855,7 @@ const RiskAssessment = () => {
           } else if (currentAnalysisUrl) {
             // scan_id가 없으면 scan_path 사용
             console.log('[Tool Validation Vulnerabilities] scan_path로 로드:', currentAnalysisUrl);
-            vulnerabilitiesRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(currentAnalysisUrl)}`, {
+            vulnerabilitiesRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(currentAnalysisUrl)}`, {
               headers: {
                 'Authorization': `Bearer ${token}`
               }
@@ -929,7 +930,7 @@ const RiskAssessment = () => {
           
           // scan_id가 있으면 우선 사용, 없으면 scan_path 사용, 둘 다 없으면 모든 데이터 조회
           if (scanId) {
-            apiUrl = `http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`;
+            apiUrl = `${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`;
             console.log('[Total Vulnerabilities] scan_id로 API 호출:', apiUrl);
             ossRes = await fetch(apiUrl, {
               headers: {
@@ -937,7 +938,7 @@ const RiskAssessment = () => {
               }
             });
           } else if (analysisUrl) {
-            apiUrl = `http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(analysisUrl)}`;
+            apiUrl = `${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(analysisUrl)}`;
             console.log('[Total Vulnerabilities] scan_path로 API 호출:', apiUrl);
             ossRes = await fetch(apiUrl, {
               headers: {
@@ -946,7 +947,7 @@ const RiskAssessment = () => {
             });
           } else {
             // scan_id와 analysisUrl이 모두 없으면 모든 데이터 조회
-            apiUrl = `http://localhost:3001/api/risk-assessment/oss-vulnerabilities`;
+            apiUrl = `${API_BASE_URL}/risk-assessment/oss-vulnerabilities`;
             console.log('[Total Vulnerabilities] 모든 데이터 조회:', apiUrl);
             ossRes = await fetch(apiUrl, {
               headers: {
@@ -3212,7 +3213,7 @@ const RiskAssessment = () => {
                                 const token = localStorage.getItem('token');
                                 
                                 // scan_path로 최신 스캔 결과 조회
-                                const res = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+                                const res = await fetch(`${API_BASE_URL}/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
                                   headers: {
                                     'Authorization': `Bearer ${token}`
                                   }
@@ -3230,7 +3231,7 @@ const RiskAssessment = () => {
                                   // OSS Vulnerabilities 로드
                                   if (scanId) {
                                     try {
-                                      const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
+                                      const ossRes = await fetch(`${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
                                         headers: {
                                           'Authorization': `Bearer ${token}`
                                         }
@@ -3249,7 +3250,7 @@ const RiskAssessment = () => {
                                   } else {
                                     // scan_path로 OSS 취약점 조회
                                     try {
-                                      const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+                                      const ossRes = await fetch(`${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
                                         headers: {
                                           'Authorization': `Bearer ${token}`
                                         }
@@ -3272,7 +3273,7 @@ const RiskAssessment = () => {
                                   
                                   // scan_path로 OSS 취약점 조회 시도
                                   try {
-                                    const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+                                    const ossRes = await fetch(`${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
                                       headers: {
                                         'Authorization': `Bearer ${token}`
                                       }
@@ -3300,7 +3301,7 @@ const RiskAssessment = () => {
                                 
                                 // Tool Validation 데이터 로드
                                 try {
-                                  const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+                                  const toolValidationRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
                                     headers: {
                                       'Authorization': `Bearer ${token}`
                                     }

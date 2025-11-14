@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiGet, API_BASE_URL } from '../../utils/api';
 import './MCPRegistry.css';
 
 const MCPRegistryDetail = ({ serverId, onClose }) => {
@@ -12,6 +13,53 @@ const MCPRegistryDetail = ({ serverId, onClose }) => {
     if (savedUser) {
       setUser(JSON.parse(savedUser));
     }
+
+    const fetchServerDetail = async () => {
+      if (!serverId) {
+        console.error('serverId가 없습니다.');
+        setItem(null);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        
+        // serverId 처리: "server_1" 형식이면 숫자만 추출, 아니면 그대로 사용
+        let serverIdNum = serverId;
+        if (typeof serverId === 'string' && serverId.startsWith('server_')) {
+          serverIdNum = parseInt(serverId.replace('server_', ''), 10);
+        } else if (typeof serverId === 'string') {
+          serverIdNum = parseInt(serverId, 10);
+        }
+        
+        console.log('서버 상세 정보 요청:', { serverId, serverIdNum, type: typeof serverId });
+        
+        if (isNaN(serverIdNum)) {
+          console.error('유효하지 않은 serverId:', serverId);
+          setItem(null);
+          setLoading(false);
+          return;
+        }
+        
+        const data = await apiGet(`/marketplace/${serverIdNum}`);
+        console.log('서버 상세 정보 응답:', data);
+        
+        if (data.success && data.data) {
+          console.log('서버 데이터 설정:', data.data);
+          setItem(data.data);
+        } else {
+          console.error('서버 상세 정보 로드 실패:', data.message || '알 수 없는 오류', data);
+          setItem(null);
+        }
+      } catch (error) {
+        console.error('서버 상세 정보 로드 실패:', error);
+        console.error('에러 상세:', error.message, error.stack);
+        setItem(null);
+      } finally {
+        setLoading(false);
+      }
+    };
 
     fetchServerDetail();
   }, [serverId]);
@@ -30,37 +78,15 @@ const MCPRegistryDetail = ({ serverId, onClose }) => {
     };
   }, [onClose]);
 
-    const fetchServerDetail = async () => {
-      try {
-      setLoading(true);
-      
-      const res = await fetch(`http://localhost:3001/api/marketplace/${serverId}`);
-        const data = await res.json();
-      
-        if (data.success) {
-          setItem(data.data);
-      } else {
-        setItem(null);
-        }
-      } catch (error) {
-        console.error('서버 상세 정보 로드 실패:', error);
-      setItem(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-
   const handleDelete = async () => {
     if (!window.confirm('정말로 이 서버를 삭제하시겠습니까?')) {
       return;
     }
 
     try {
-      const res = await fetch(`http://localhost:3001/api/marketplace/server/${serverId}`, {
-        method: 'DELETE'
-      });
-
-      const data = await res.json();
+      const { apiDelete } = await import('../../utils/api');
+      const data = await apiDelete(`/marketplace/server/${serverId}`);
+      
       if (data.success) {
         alert('서버가 삭제되었습니다.');
         onClose();
@@ -139,12 +165,12 @@ const MCPRegistryDetail = ({ serverId, onClose }) => {
         <div className="download-box">
           {item.file_path ? (
             <a 
-              href={`http://localhost:3001/api/file/download/${item.id}?type=server${user ? `&user_id=${user.id}` : ''}`}
+              href={`${API_BASE_URL}/file/download/${item.id}?type=server${user ? `&user_id=${user.id}` : ''}`}
               download
               style={{ 
                 display: 'inline-block',
                 padding: '8px 16px',
-                    backgroundColor: '#003153',
+                backgroundColor: '#003153',
                 color: '#fff',
                 textDecoration: 'none',
                 borderRadius: '4px'

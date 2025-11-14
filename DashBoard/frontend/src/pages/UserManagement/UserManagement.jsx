@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Pagination from '../../components/Pagination';
+import { apiGet, apiPut, apiPost, apiDelete } from '../../utils/api';
 import './UserManagement.css';
 
 const UserManagement = () => {
@@ -32,13 +33,17 @@ const UserManagement = () => {
       queryParams.append('page', pagination.page);
       queryParams.append('limit', '20');
 
-      const res = await fetch(`http://localhost:3001/api/users?${queryParams}`);
-      const data = await res.json();
+      const data = await apiGet(`/users?${queryParams}`);
+      console.log('사용자 목록 응답:', data);
       if (data.success) {
-        setUsers(data.data || []);
+        const userList = data.data || [];
+        console.log('설정할 사용자 목록:', userList);
+        setUsers(userList);
         if (data.pagination) {
           setPagination(prev => ({ ...prev, ...data.pagination }));
         }
+      } else {
+        console.error('사용자 목록 로드 실패: success가 false', data);
       }
     } catch (error) {
       console.error('사용자 목록 로드 실패:', error);
@@ -49,8 +54,7 @@ const UserManagement = () => {
 
   const fetchRoles = async () => {
     try {
-      const res = await fetch('http://localhost:3001/api/debug/roles');
-      const data = await res.json();
+      const data = await apiGet('/debug/roles');
       if (data.success) {
         setRoles(data.data);
       }
@@ -61,10 +65,15 @@ const UserManagement = () => {
 
   const fetchTeams = async () => {
     try {
-      const res = await fetch('http://localhost:3001/api/users/teams');
-      const data = await res.json();
+      console.log('팀 목록 요청 중...');
+      const data = await apiGet('/users/teams');
+      console.log('팀 목록 응답:', data);
       if (data.success) {
-        setTeams(data.data || []);
+        const teamList = data.data || [];
+        console.log('설정할 팀 목록:', teamList);
+        setTeams(teamList);
+      } else {
+        console.error('팀 목록 로드 실패: success가 false', data);
       }
     } catch (error) {
       console.error('팀 목록 로드 실패:', error);
@@ -73,10 +82,15 @@ const UserManagement = () => {
 
   const fetchPositions = async () => {
     try {
-      const res = await fetch('http://localhost:3001/api/users/positions');
-      const data = await res.json();
+      console.log('직책 목록 요청 중...');
+      const data = await apiGet('/users/positions');
+      console.log('직책 목록 응답:', data);
       if (data.success) {
-        setPositions(data.data || []);
+        const positionList = data.data || [];
+        console.log('설정할 직책 목록:', positionList);
+        setPositions(positionList);
+      } else {
+        console.error('직책 목록 로드 실패: success가 false', data);
       }
     } catch (error) {
       console.error('직책 목록 로드 실패:', error);
@@ -101,14 +115,10 @@ const UserManagement = () => {
   const handleSave = async () => {
     try {
       // 사용자 정보 업데이트
-      await fetch(`http://localhost:3001/api/users/${editingUser.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          team: form.team || null,
-          position: form.position || null,
-          ip_address: form.ip_address || null
-        })
+      await apiPut(`/users/${editingUser.id}`, {
+        team: form.team || null,
+        position: form.position || null,
+        ip_address: form.ip_address || null
       });
 
       // 역할 업데이트
@@ -117,11 +127,7 @@ const UserManagement = () => {
       // 추가할 역할
       const rolesToAdd = form.roles.filter(role => !currentRoles.includes(role));
       for (const roleName of rolesToAdd) {
-        await fetch(`http://localhost:3001/api/users/${editingUser.id}/roles`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ roleName })
-        });
+        await apiPost(`/users/${editingUser.id}/roles`, { roleName });
       }
 
       // 제거할 역할
@@ -130,9 +136,7 @@ const UserManagement = () => {
         const role = roles.find(r => r.name === roleName);
         if (role) {
           try {
-            await fetch(`http://localhost:3001/api/users/${editingUser.id}/roles/${role.id}`, {
-              method: 'DELETE'
-            });
+            await apiDelete(`/users/${editingUser.id}/roles/${role.id}`);
           } catch (err) {
             console.error(`역할 ${roleName} 제거 실패:`, err);
           }
@@ -150,11 +154,7 @@ const UserManagement = () => {
 
   const toggleUserStatus = async (userId, isActive) => {
     try {
-      await fetch(`http://localhost:3001/api/users/${userId}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: !isActive })
-      });
+      await apiPut(`/users/${userId}/status`, { is_active: !isActive });
       alert(`사용자가 ${!isActive ? '활성화' : '비활성화'}되었습니다.`);
       fetchUsers();
     } catch (error) {
@@ -191,33 +191,34 @@ const UserManagement = () => {
 
   const groupedUsers = groupUsersByTeam();
   
-  // 실제 사용자가 있는 팀 목록 추출 (그룹화된 사용자에서)
-  const userTeams = Object.keys(groupedUsers).filter(team => groupedUsers[team].length > 0);
-  
-  // teams 상태와 실제 사용자 팀을 합치고, 중복 제거 및 정렬
-  const allTeams = Array.from(new Set([...teams, ...userTeams])).sort();
+  // 사용자 목록에서 실제로 존재하는 팀 목록 추출
+  const actualTeams = Object.keys(groupedUsers).filter(team => team !== '미지정');
+  const allTeams = selectedTeam === 'Total' 
+    ? [...new Set([...actualTeams, ...teams, '미지정'])] 
+    : [selectedTeam];
   
   // 선택된 팀에 따라 필터링
   const getFilteredTeams = () => {
     if (selectedTeam === 'Total') {
-      return allTeams.length > 0 ? allTeams : ['미지정'];
+      // Total 선택 시: 실제 사용자가 있는 모든 팀 표시
+      return Object.keys(groupedUsers).length > 0 
+        ? Object.keys(groupedUsers) 
+        : ['미지정'];
     }
     return [selectedTeam];
   };
 
   const filteredTeams = getFilteredTeams();
   const totalUsers = users.length;
-
-  if (loading) {
-    return (
-      <section className="user-management">
-        <div className="loading-container">
-          <div className="loading-spinner"></div>
-          <p>로딩 중...</p>
-        </div>
-      </section>
-    );
-  }
+  
+  console.log('디버깅 정보:', {
+    users: users.length,
+    groupedUsers,
+    filteredTeams,
+    selectedTeam,
+    teams,
+    actualTeams
+  });
 
   return (
     <section className="user-management">
@@ -271,13 +272,151 @@ const UserManagement = () => {
         </div>
       </div>
       
-      {filteredTeams.map(team => {
-        const teamUsers = groupedUsers[team] || [];
-        if (teamUsers.length === 0 && selectedTeam !== 'Total') return null;
+      {filteredTeams.length === 0 && users.length > 0 ? (
+        // 팀 정보가 없어도 사용자 표시
+        <div className="team-section">
+          <h2 className="team-header">전체 ({users.length})</h2>
+          <div className="user-table-container">
+            <table className="user-table">
+              <thead>
+                <tr>
+                  <th>사용자명</th>
+                  <th>사원번호</th>
+                  <th>이메일</th>
+                  <th>팀</th>
+                  <th>직책</th>
+                  <th>IP 주소</th>
+                  <th>역할</th>
+                  <th>상태</th>
+                  <th>작업</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(user => (
+                  <tr key={user.id}>
+                    {editingUser?.id === user.id ? (
+                      <>
+                        <td>{user.username}</td>
+                        <td>{user.employee_id}</td>
+                        <td>{user.email}</td>
+                        <td>
+                          <select
+                            value={form.team}
+                            onChange={(e) => setForm({ ...form, team: e.target.value })}
+                            style={{ minWidth: '120px' }}
+                          >
+                            <option value="">미지정</option>
+                            {teams.map(teamOption => (
+                              <option key={teamOption} value={teamOption}>{teamOption}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <select
+                            value={form.position}
+                            onChange={(e) => setForm({ ...form, position: e.target.value })}
+                            style={{ minWidth: '150px' }}
+                          >
+                            <option value="">미지정</option>
+                            {positions.map(positionOption => (
+                              <option key={positionOption} value={positionOption}>{positionOption}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            value={form.ip_address}
+                            onChange={(e) => setForm({ ...form, ip_address: e.target.value })}
+                            placeholder="ex: 192.168.1.100"
+                            style={{ minWidth: '150px', padding: '4px 8px' }}
+                          />
+                        </td>
+                        <td>
+                          <div className="role-checkboxes">
+                            {roles.map(role => (
+                              <label key={role.id} className="role-checkbox">
+                                <input
+                                  type="checkbox"
+                                  checked={form.roles.includes(role.name)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setForm({
+                                        ...form,
+                                        roles: [...form.roles, role.name]
+                                      });
+                                    } else {
+                                      setForm({
+                                        ...form,
+                                        roles: form.roles.filter(r => r !== role.name)
+                                      });
+                                    }
+                                  }}
+                                />
+                                <span>{role.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`status-badge ${user.is_active ? 'status-active' : 'status-inactive'}`}>
+                            {user.is_active ? '활성' : '비활성'}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="action-buttons">
+                            <button onClick={handleSave} className="btn-save">저장</button>
+                            <button onClick={handleCancel} className="btn-cancel">취소</button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td>{user.username}</td>
+                        <td>{user.employee_id}</td>
+                        <td>{user.email}</td>
+                        <td>{user.team || '미지정'}</td>
+                        <td>{user.position || '-'}</td>
+                        <td>{user.ip_address || '-'}</td>
+                        <td>
+                          <div className="role-badges">
+                            {(user.roles || []).map(role => (
+                              <span key={role} className={`role-badge ${role === 'admin' ? 'admin' : ''}`}>{role}</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`status-badge ${user.is_active ? 'status-active' : 'status-inactive'}`}>
+                            {user.is_active ? '활성' : '비활성'}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="action-buttons">
+                            <button onClick={() => handleEdit(user)} className="btn-edit">편집</button>
+                            <button 
+                              onClick={() => toggleUserStatus(user.id, user.is_active)}
+                              className={`btn-status ${user.is_active ? 'btn-deactivate' : 'btn-activate'}`}
+                            >
+                              {user.is_active ? '비활성화' : '활성화'}
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        filteredTeams.map(team => {
+          const teamUsers = groupedUsers[team] || [];
+          if (teamUsers.length === 0 && selectedTeam !== 'Total') return null;
 
-        return (
-          <div key={team} className="team-section">
-            <h2 className="team-header">{team} ({teamUsers.length})</h2>
+          return (
+            <div key={team} className="team-section">
+              <h2 className="team-header">{team} ({teamUsers.length})</h2>
             <div className="user-table-container">
               <table className="user-table">
                 <thead>
@@ -412,7 +551,8 @@ const UserManagement = () => {
             </div>
           </div>
         );
-      })}
+        })
+      )}
 
       <Pagination
         currentPage={pagination.page}

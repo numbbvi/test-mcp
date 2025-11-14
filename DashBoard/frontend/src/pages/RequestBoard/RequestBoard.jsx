@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Pagination from '../../components/Pagination';
+import { API_BASE_URL } from '../../utils/api';
 import './RequestBoard.css';
 
 const RequestBoard = () => {
@@ -81,7 +82,7 @@ const RequestBoard = () => {
     const fetchTeams = async () => {
       try {
         const token = localStorage.getItem('token');
-        const res = await fetch('http://localhost:3001/api/users/teams', {
+        const res = await fetch(`${API_BASE_URL}/users/teams`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -128,16 +129,16 @@ const RequestBoard = () => {
         
         // 각 상태별로 요청 개수 가져오기
         const [allRes, pendingRes, approvedRes, rejectedRes] = await Promise.all([
-          fetch(`http://localhost:3001/api/marketplace/requests?limit=10000`, {
+          fetch(`${API_BASE_URL}/marketplace/requests?limit=10000`, {
             headers
           }),
-          fetch(`http://localhost:3001/api/marketplace/requests?status=pending&limit=10000`, {
+          fetch(`${API_BASE_URL}/marketplace/requests?status=pending&limit=10000`, {
             headers
           }),
-          fetch(`http://localhost:3001/api/marketplace/requests?status=approved&limit=10000`, {
+          fetch(`${API_BASE_URL}/marketplace/requests?status=approved&limit=10000`, {
             headers
           }),
-          fetch(`http://localhost:3001/api/marketplace/requests?status=rejected&limit=10000`, {
+          fetch(`${API_BASE_URL}/marketplace/requests?status=rejected&limit=10000`, {
             headers
           })
         ]);
@@ -204,7 +205,7 @@ const RequestBoard = () => {
         headers['Authorization'] = `Bearer ${token}`;
       }
       
-      const res = await fetch(`http://localhost:3001/api/marketplace/requests?${queryParams}`, {
+      const res = await fetch(`${API_BASE_URL}/marketplace/requests?${queryParams}`, {
         headers
       });
       const data = await res.json();
@@ -273,7 +274,7 @@ const RequestBoard = () => {
         headers['Authorization'] = `Bearer ${token}`;
       }
       
-      const res = await fetch(`http://localhost:3001/api/marketplace/requests?${queryParams}`, {
+      const res = await fetch(`${API_BASE_URL}/marketplace/requests?${queryParams}`, {
         headers
       });
       const data = await res.json();
@@ -366,7 +367,7 @@ const RequestBoard = () => {
           const token = localStorage.getItem('token');
           
           // Code 취약점 확인
-          const codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+          const codeRes = await fetch(`${API_BASE_URL}/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
@@ -386,14 +387,14 @@ const RequestBoard = () => {
               try {
             let ossRes;
             if (scanId) {
-              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
+              ossRes = await fetch(`${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
                   headers: {
                     'Authorization': `Bearer ${token}`
                   }
                 });
             } else {
               // scan_id가 없으면 scan_path로 직접 조회
-              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+              ossRes = await fetch(`${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
                 headers: {
                   'Authorization': `Bearer ${token}`
                 }
@@ -416,13 +417,13 @@ const RequestBoard = () => {
           try {
             let toolRes;
             if (scanId) {
-              toolRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
+              toolRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
                 headers: {
                   'Authorization': `Bearer ${token}`
                 }
               });
             } else {
-              toolRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+              toolRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
                 headers: {
                   'Authorization': `Bearer ${token}`
                 }
@@ -520,7 +521,7 @@ const RequestBoard = () => {
       const token = localStorage.getItem('token');
       
       // 스캔 시작
-      const res = await fetch('http://localhost:3001/api/risk-assessment/scan-code', {
+      const res = await fetch(`${API_BASE_URL}/risk-assessment/scan-code`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -548,7 +549,7 @@ const RequestBoard = () => {
       const pollProgress = async () => {
         while (true) {
           try {
-            const progressRes = await fetch(`http://localhost:3001/api/risk-assessment/scan-progress?scan_id=${scanId}`, {
+            const progressRes = await fetch(`${API_BASE_URL}/risk-assessment/scan-progress?scan_id=${scanId}`, {
               headers: {
                 'Authorization': `Bearer ${token}`
               }
@@ -603,7 +604,7 @@ const RequestBoard = () => {
                   
                   // 완료 후 취약점 개수 조회
                   try {
-                    const vulnRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}`, {
+                    const vulnRes = await fetch(`${API_BASE_URL}/risk-assessment/code-vulnerabilities?scan_id=${scanId}`, {
                       headers: {
                         'Authorization': `Bearer ${token}`
                       }
@@ -615,7 +616,7 @@ const RequestBoard = () => {
                     // OSS 취약점 개수 조회
                       let ossVulns = 0;
                     try {
-                      const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
+                      const ossRes = await fetch(`${API_BASE_URL}/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
                         headers: {
                           'Authorization': `Bearer ${token}`
                         }
@@ -629,7 +630,7 @@ const RequestBoard = () => {
                       // Tool 취약점 개수 조회
                       let toolVulns = 0;
                       try {
-                        const toolRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
+                        const toolRes = await fetch(`${API_BASE_URL}/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
                           headers: {
                             'Authorization': `Bearer ${token}`
                           }
@@ -760,7 +761,7 @@ const RequestBoard = () => {
     if (!scanId) {
       try {
         const token = localStorage.getItem('token');
-        const codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+        const codeRes = await fetch(`${API_BASE_URL}/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -803,7 +804,7 @@ const RequestBoard = () => {
         return;
       }
       
-      const url = `http://localhost:3001/api/marketplace/scan-tools?request_id=${selectedRequest.id}&use_sandbox=true`;
+      const url = `${API_BASE_URL}/marketplace/scan-tools?request_id=${selectedRequest.id}&use_sandbox=true`;
       
       const res = await fetch(url);
       const data = await res.json();
@@ -889,7 +890,7 @@ const RequestBoard = () => {
     }
 
     try {
-      const res = await fetch(`http://localhost:3001/api/marketplace/requests/${selectedRequest.id}/review`, {
+      const res = await fetch(`${API_BASE_URL}/marketplace/requests/${selectedRequest.id}/review`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1125,10 +1126,10 @@ const RequestBoard = () => {
                 }
                 
                 const [allRes, pendingRes, approvedRes, rejectedRes] = await Promise.all([
-                  fetch(`http://localhost:3001/api/marketplace/requests?limit=10000`, { headers }),
-                  fetch(`http://localhost:3001/api/marketplace/requests?status=pending&limit=10000`, { headers }),
-                  fetch(`http://localhost:3001/api/marketplace/requests?status=approved&limit=10000`, { headers }),
-                  fetch(`http://localhost:3001/api/marketplace/requests?status=rejected&limit=10000`, { headers })
+                  fetch(`${API_BASE_URL}/marketplace/requests?limit=10000`, { headers }),
+                  fetch(`${API_BASE_URL}/marketplace/requests?status=pending&limit=10000`, { headers }),
+                  fetch(`${API_BASE_URL}/marketplace/requests?status=approved&limit=10000`, { headers }),
+                  fetch(`${API_BASE_URL}/marketplace/requests?status=rejected&limit=10000`, { headers })
                 ]);
                 
                 const [allData, pendingData, approvedData, rejectedData] = await Promise.all([
@@ -1791,7 +1792,7 @@ const RequestBoard = () => {
                               
                               try {
                                 const token = localStorage.getItem('token');
-                                const res = await fetch(`http://localhost:3001/api/marketplace/requests/${selectedRequest.id}`, {
+                                const res = await fetch(`${API_BASE_URL}/marketplace/requests/${selectedRequest.id}`, {
                                   method: 'DELETE',
                                   headers: {
                                     'Authorization': `Bearer ${token}`
