@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const marketplaceController = require('../controllers/marketplaceController');
 const upload = require('../middleware/upload');
-const { jwtAuth } = require('../middleware/jwtAuth');
+const { jwtAuth, optionalJwtAuth } = require('../middleware/jwtAuth');
 
-// MCP 서버 목록 조회
-router.get('/', marketplaceController.getMcpServers);
+// MCP 서버 목록 조회 (선택적 인증: admin 체크를 위해)
+router.get('/', optionalJwtAuth, marketplaceController.getMcpServers);
 
 // MCP 서버 등록 요청 (파일 및 이미지 업로드 포함)
 router.post('/request', upload.fields, marketplaceController.createMcpRequest);
@@ -24,6 +24,9 @@ router.delete('/requests/:id', jwtAuth, marketplaceController.deleteMcpRequest);
 
 // MCP 서버 삭제 (관리자용) - :id 라우트보다 먼저 정의
 router.delete('/server/:id', marketplaceController.deleteMcpServer);
+
+// Pending 상태의 등록 요청 개수 조회 (알림용)
+router.get('/requests/pending-count', jwtAuth, marketplaceController.getPendingRequestCount);
 
 // MCP 서버 상세 조회 (마지막에 위치 - 와일드카드 라우트)
 router.get('/:id', marketplaceController.getMcpServerDetail);

@@ -9,6 +9,9 @@ router.post('/violation', apiAuth, dlpController.receiveViolationLog);
 // 최신 로그 ID 확인 (변경 감지용)
 router.get('/logs/latest', dlpController.getLatestLogId);
 
+// Pending 상태의 DLP 위반 로그 개수 조회 (알림용)
+router.get('/logs/pending-count', dlpController.getPendingCount);
+
 // DLP 로그 조회 (관리자용)
 router.get('/logs', dlpController.getViolationLogs);
 

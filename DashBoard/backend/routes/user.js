@@ -12,13 +12,13 @@ router.get('/me', jwtAuth, userController.getMyInfo);
 // 비밀번호 변경 (현재 로그인한 사용자)
 router.put('/me/password', jwtAuth, userController.changePassword);
 
-// 모든 팀 목록 조회 (/:id보다 먼저 정의해야 함)
+// 모든 팀 목록 조회 (:id 라우트보다 먼저 정의해야 함)
 router.get('/teams', userController.getAllTeams);
 
-// 모든 직책 목록 조회 (/:id보다 먼저 정의해야 함)
+// 모든 직책 목록 조회 (:id 라우트보다 먼저 정의해야 함)
 router.get('/positions', userController.getAllPositions);
 
-// 사용자 상세 정보 조회
+// 사용자 상세 정보 조회 (와일드카드 라우트는 마지막에)
 router.get('/:id', userController.getUserById);
 
 // 비밀번호 변경 (특정 사용자 ID로)
