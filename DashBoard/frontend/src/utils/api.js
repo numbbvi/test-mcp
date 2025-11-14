@@ -5,10 +5,43 @@
 
 // 환경 변수에서 API URL 가져오기 (Vite는 import.meta.env 사용)
 // VITE_API_BASE_URL이 설정되지 않으면 기본값 사용
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-  (typeof window !== 'undefined' && window.location.hostname === 'localhost' 
-    ? 'http://localhost:3001/api' 
-    : `${window.location.protocol}//${window.location.hostname}:3001/api`);
+const getApiBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  const isBrowser = typeof window !== 'undefined';
+  const hostname = isBrowser ? window.location.hostname : null;
+  const protocol = isBrowser ? window.location.protocol : 'http:';
+
+  // 환경 변수가 설정된 경우 우선 적용하되,
+  // 로컬 주소가 설정돼 있고 실제 접속 호스트가 로컬이 아니면 자동으로 서버 호스트를 사용
+  if (envUrl) {
+    const envIsLocal = envUrl.includes('localhost') || envUrl.includes('127.0.0.1');
+    const hostIsLocal = hostname === 'localhost' || hostname === '127.0.0.1';
+    
+    if (envIsLocal && isBrowser && !hostIsLocal) {
+      return `${protocol}//${hostname}:3001/api`;
+    }
+    
+    return envUrl;
+  }
+  
+  // 브라우저 환경에서만 실행
+  if (isBrowser) {
+    const hostIsLocal = hostname === 'localhost' || hostname === '127.0.0.1';
+    if (hostIsLocal) {
+      return 'http://localhost:3001/api';
+    }
+    // EC2나 다른 서버인 경우 같은 호스트의 3001 포트 사용
+    return `${protocol}//${hostname}:3001/api`;
+  }
+  
+  // 기본값 (서버 사이드 렌더링 등)
+  return 'http://localhost:3001/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+// API_BASE_URL을 export하여 다른 파일에서도 사용 가능하도록 함
+export { API_BASE_URL };
 
 /**
  * localStorage에서 토큰 가져오기

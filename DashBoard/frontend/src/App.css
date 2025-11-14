@@ -161,6 +161,52 @@ body, html, #root {
 .sidebar:hover .sidebar-menu a {
   justify-content: flex-start; /* 열렸을 때 왼쪽 정렬 */
 }
+
+.menu-item-wrapper {
+  display: flex;
+  align-items: center;
+  position: relative;
+  width: 100%;
+}
+
+.notification-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #ff6b35; /* 오렌지색 배경 */
+  color: #fff;
+  border-radius: 50%;
+  min-width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0 4px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+.sidebar:hover .notification-badge {
+  position: static;
+  margin-left: auto;
+  top: auto;
+  right: auto;
+}
+
 .menu-icon {
   width: 20px;
   height: 20px;
