@@ -238,6 +238,38 @@ const migrateTables = () => {
       console.error('Users 테이블 마이그레이션 오류:', usersError);
     }
 
+    // ==================== API 키 관리 테이블 생성 ====================
+    try {
+      const apiKeysTableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='api_keys'
+      `).get();
+      
+      if (!apiKeysTableExists) {
+        db.exec(`
+          CREATE TABLE api_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            mcp_server_name TEXT NOT NULL,
+            field_name TEXT NOT NULL,
+            field_value TEXT NOT NULL,
+            field_description TEXT,
+            auth_type TEXT DEFAULT 'Key/Token 인증',
+            created_at DATETIME DEFAULT (datetime('now', '+9 hours')),
+            updated_at DATETIME DEFAULT (datetime('now', '+9 hours')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+          )
+        `);
+        // 사용자별 MCP 서버별 필드명 중복 방지 인덱스
+        db.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_user_server_field 
+          ON api_keys(user_id, mcp_server_name, field_name)
+        `);
+        console.log('API Keys 테이블 생성 완료');
+      }
+    } catch (apiKeysError) {
+      console.error('API Keys 테이블 마이그레이션 오류:', apiKeysError);
+    }
+
     // ==================== Tool 권한 관리 마이그레이션 ====================
     try {
       // mcp_servers 테이블에 tools 컬럼 추가
@@ -590,6 +622,45 @@ const initializeTables = () => {
       unreachable_functions INTEGER DEFAULT 0,
       raw_data TEXT,
       created_at DATETIME DEFAULT (datetime('now', '+9 hours'))
+    )
+  `);
+
+  // Tool Validation Vulnerabilities 테이블 (TOOL-VET 결과 저장)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tool_validation_vulnerabilities (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scan_id TEXT,
+      scan_path TEXT,
+      scan_timestamp DATETIME DEFAULT (datetime('now', '+9 hours')),
+      tool_name TEXT NOT NULL,
+      host TEXT,
+      method TEXT,
+      path TEXT,
+      category_code TEXT,
+      category_name TEXT,
+      title TEXT,
+      description TEXT,
+      evidence TEXT,
+      recommendation TEXT,
+      raw_data TEXT,
+      created_at DATETIME DEFAULT (datetime('now', '+9 hours'))
+    )
+  `);
+
+  // Tool Validation Reports 테이블 (TOOL-VET 리포트 전체 저장)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tool_validation_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scan_id TEXT,
+      scan_path TEXT,
+      mcp_server_name TEXT,
+      scan_timestamp DATETIME DEFAULT (datetime('now', '+9 hours')),
+      report_data TEXT NOT NULL,
+      total_tools INTEGER DEFAULT 0,
+      total_endpoints INTEGER DEFAULT 0,
+      total_vulnerabilities INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT (datetime('now', '+9 hours')),
+      UNIQUE(scan_path, scan_timestamp)
     )
   `);
 

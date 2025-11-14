@@ -190,12 +190,17 @@ const UserManagement = () => {
   };
 
   const groupedUsers = groupUsersByTeam();
-  const allTeams = [...teams, '미지정'];
+  
+  // 실제 사용자가 있는 팀 목록 추출 (그룹화된 사용자에서)
+  const userTeams = Object.keys(groupedUsers).filter(team => groupedUsers[team].length > 0);
+  
+  // teams 상태와 실제 사용자 팀을 합치고, 중복 제거 및 정렬
+  const allTeams = Array.from(new Set([...teams, ...userTeams])).sort();
   
   // 선택된 팀에 따라 필터링
   const getFilteredTeams = () => {
     if (selectedTeam === 'Total') {
-      return allTeams;
+      return allTeams.length > 0 ? allTeams : ['미지정'];
     }
     return [selectedTeam];
   };
@@ -289,16 +294,9 @@ const UserManagement = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {teamUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
-                        데이터가 없습니다.
-                      </td>
-                    </tr>
-                  ) : (
-                    teamUsers.map(user => (
-                      <tr key={user.id}>
-                        {editingUser?.id === user.id ? (
+                  {teamUsers.map(user => (
+              <tr key={user.id}>
+                {editingUser?.id === user.id ? (
                   <>
                     <td>{user.username}</td>
                     <td>{user.employee_id}</td>
@@ -407,9 +405,8 @@ const UserManagement = () => {
                     </td>
                   </>
                 )}
-                      </tr>
-                    ))
-                  )}
+                  </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

@@ -21,7 +21,7 @@ function isValidGithubUrl(url) {
 
 // 스캐너 경로 설정 (환경 변수로 오버라이드 가능 - 클라우드 환경에서 유용)
 const SCANNER_PATH = process.env.SCANNER_PATH || path.resolve(__dirname, '../../../MCP-SCAN');
-const ARTIFACTS_DIR = path.join(SCANNER_PATH, 'artifacts');
+const OUTPUT_DIR = path.join(SCANNER_PATH, 'output');
 const CONTAINER_NAME = process.env.DOCKER_CONTAINER_NAME || 'bomtool-scanner';
 
 // Bomtori 분석 설정 (dev-server.js와 동일)
@@ -51,6 +51,8 @@ const riskAssessmentController = {
   scanCode: async (req, res) => {
     try {
       const { github_url, repository_path, mcp_server_name } = req.body;
+      
+      console.log(`[SCAN] scanCode 호출됨: github_url="${github_url}", repository_path="${repository_path}", mcp_server_name="${mcp_server_name}"`);
       
       if (!github_url && !repository_path) {
         return res.status(400).json({
@@ -205,6 +207,7 @@ const riskAssessmentController = {
       // 진행률 초기화
       const hasBomtori = github_url && isValidGithubUrl(github_url);
       const hasToolVet = github_url && isValidGithubUrl(github_url);
+      console.log(`[SCAN] 진행률 초기화: hasBomtori=${hasBomtori}, hasToolVet=${hasToolVet}, github_url="${github_url}", isValidGithubUrl=${github_url ? isValidGithubUrl(github_url) : false}`);
       scanProgress.set(scanId, {
         bomtori: hasBomtori ? 0 : null, // null이면 실행 안 함
         scanner: 0,
@@ -674,7 +677,7 @@ const riskAssessmentController = {
                 if (currentProgress) {
                   currentProgress.bomtori = 100; // 실패해도 100%로 표시
                   currentProgress.bomtoriCompleted = true;
-                  currentProgress.bomtoriError = `Bomtori 분석 실패 (종료 코드: ${code}). 프로젝트 타입을 감지할 수 없거나 지원되지 않는 프로젝트입니다.`;
+                  currentProgress.bomtoriError = `Bomtori 분석 실패 (종료 코드: ${code})`;
                   scanProgress.set(scanId, currentProgress);
                 }
                 resolve(); // 실패해도 resolve (오류는 무시하지만 오류 정보는 저장)
@@ -793,7 +796,7 @@ const riskAssessmentController = {
 
           try {
             // 결과 파일 읽기 (안전한 서버 이름으로 저장된 파일)
-            const resultFile = path.join(ARTIFACTS_DIR, `${safeServerName}.json`);
+            const resultFile = path.join(OUTPUT_DIR, `${safeServerName}.json`);
             
             // 파일 존재 확인 (최대 5초 대기)
             let fileExists = false;
@@ -920,61 +923,360 @@ const riskAssessmentController = {
       scanPromises.push(scannerPromise);
       
       // TOOL-VET 분석도 동시에 실행 (GitHub URL이 있는 경우만)
+      console.log(`[TOOL-VET] TOOL-VET 실행 조건 확인: github_url="${github_url}", isValidGithubUrl=${github_url ? isValidGithubUrl(github_url) : false}`);
+      console.log(`[TOOL-VET] ========== TOOL-VET 분석 시작 ==========`);
       if (github_url && isValidGithubUrl(github_url)) {
         try {
-          // TOOL-VET 컨테이너가 실행 중인지 확인
-          try {
-            const checkToolVetProcess = spawn('docker', [
-              'ps',
-              '--filter',
-              `name=${TOOL_VET_CONTAINER_NAME}`,
-              '--format',
-              '{{.Names}}'
-            ], {
-              cwd: TOOL_VET_ROOT
-            });
+          // TOOL-VET은 항상 새로 분석 실행 (기존 리포트 파일 확인 로직 제거)
+          let existingReportFile = null; // 항상 null로 설정하여 새로 스캔하도록 함
+          console.log(`[TOOL-VET] 기존 리포트 파일 확인 스킵 - 항상 새로 스캔 실행`);
+          
+          // 기존 리포트 파일이 있어도 항상 새로 스캔 실행 (주석 처리)
+          if (false && existingReportFile) {
+            console.log(`기존 TOOL-VET 리포트 파일 사용: ${existingReportFile} (스캔 스킵)`);
             
-            let toolVetStdout = '';
-            let toolVetStderr = '';
-            
-            checkToolVetProcess.stdout.on('data', (data) => {
-              toolVetStdout += data.toString();
-            });
-            
-            checkToolVetProcess.stderr.on('data', (data) => {
-              toolVetStderr += data.toString();
-            });
-            
-            await new Promise((resolve, reject) => {
-              checkToolVetProcess.on('close', (code) => {
-                if (code !== 0) {
-                  reject(new Error(`Docker 명령 실행 실패: ${toolVetStderr || '알 수 없는 오류'}`));
-                } else {
-                  resolve();
+            // 리포트 파일 처리 함수
+            const processReportFile = async (reportFile) => {
+              const reportPath = path.join(TOOL_VET_OUTPUT_DIR, reportFile);
+              const reportData = JSON.parse(await fs.readFile(reportPath, 'utf-8'));
+              
+              // MCP 서버 이름 추출
+              let mcpServerName = null;
+              if (reportFile.includes('-report.json')) {
+                mcpServerName = reportFile.replace('-report.json', '');
+              } else if (serverName) {
+                mcpServerName = serverName;
+              } else if (github_url) {
+                mcpServerName = github_url.split('/').pop().replace('.git', '').replace(/[^a-zA-Z0-9_-]/g, '_');
+              }
+              
+              // 리포트 요약 정보 계산
+              let totalTools = 0;
+              let totalEndpoints = 0;
+              let totalVulns = 0;
+              
+              if (reportData.tools && Array.isArray(reportData.tools)) {
+                totalTools = reportData.tools.length;
+                for (const tool of reportData.tools) {
+                  if (tool.api_endpoints && Array.isArray(tool.api_endpoints)) {
+                    totalEndpoints += tool.api_endpoints.length;
+                    for (const endpoint of tool.api_endpoints) {
+                      if (endpoint.vulnerabilities && Array.isArray(endpoint.vulnerabilities)) {
+                        totalVulns += endpoint.vulnerabilities.length;
+                      }
+                    }
+                  }
                 }
+              }
+              
+              // summary가 있으면 사용
+              if (reportData.summary) {
+                if (reportData.summary.total_tools !== undefined) {
+                  totalTools = reportData.summary.total_tools;
+                }
+                if (reportData.summary.total_vulnerabilities !== undefined) {
+                  totalVulns = reportData.summary.total_vulnerabilities;
+                }
+              }
+              
+              // 기존 tool validation 리포트 삭제 (같은 scan_path의 이전 스캔 결과)
+              try {
+                const deleteReportStmt = db.prepare('DELETE FROM tool_validation_reports WHERE scan_path = ?');
+                deleteReportStmt.run(scanPath);
+                console.log(`기존 Tool Validation 리포트 삭제 완료: ${scanPath}`);
+              } catch (deleteError) {
+                console.error('기존 Tool Validation 리포트 삭제 오류:', deleteError);
+              }
+              
+              // 리포트 전체 저장
+              const insertReportStmt = db.prepare(`
+                INSERT INTO tool_validation_reports (
+                  scan_id, scan_path, mcp_server_name, scan_timestamp,
+                  report_data, total_tools, total_endpoints, total_vulnerabilities
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              `);
+              
+              insertReportStmt.run(
+                scanId,
+                scanPath,
+                mcpServerName,
+                getKoreaTimeSQLite(),
+                JSON.stringify(reportData),
+                totalTools,
+                totalEndpoints,
+                totalVulns
+              );
+              
+              console.log(`Tool Validation 리포트 저장 완료: ${mcpServerName || 'unknown'} (tools: ${totalTools}, endpoints: ${totalEndpoints}, vulnerabilities: ${totalVulns})`);
+              
+              // 취약점 데이터도 저장
+              try {
+                const deleteStmt = db.prepare('DELETE FROM tool_validation_vulnerabilities WHERE scan_path = ?');
+                deleteStmt.run(scanPath);
+                
+                if (reportData.tools && Array.isArray(reportData.tools)) {
+                  const insertStmt = db.prepare(`
+                    INSERT INTO tool_validation_vulnerabilities (
+                      scan_id, scan_path, scan_timestamp,
+                      tool_name, host, method, path,
+                      category_code, category_name, title, description, evidence, recommendation, raw_data
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  `);
+                  
+                  let savedVulns = 0;
+                  for (const tool of reportData.tools) {
+                    const toolName = tool.name || '';
+                    
+                    if (tool.api_endpoints && Array.isArray(tool.api_endpoints)) {
+                      for (const endpoint of tool.api_endpoints) {
+                        const host = endpoint.host || '';
+                        const method = endpoint.method || '';
+                        const path = endpoint.path || '';
+                        
+                        if (endpoint.vulnerabilities && Array.isArray(endpoint.vulnerabilities)) {
+                          for (const vuln of endpoint.vulnerabilities) {
+                            try {
+                              insertStmt.run(
+                                scanId,
+                                scanPath,
+                                getKoreaTimeSQLite(),
+                                toolName,
+                                host,
+                                method,
+                                path,
+                                vuln.category_code || '',
+                                vuln.category_name || '',
+                                vuln.title || '',
+                                vuln.description || '',
+                                vuln.evidence || '',
+                                vuln.recommendation || '',
+                                JSON.stringify(vuln)
+                              );
+                              savedVulns++;
+                            } catch (insertError) {
+                              console.error('Tool Validation 취약점 저장 오류:', insertError);
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  
+                  console.log(`Tool Validation 취약점 ${savedVulns}개 저장 완료`);
+                }
+              } catch (vulnError) {
+                console.error('Tool Validation 취약점 저장 오류:', vulnError);
+              }
+            };
+            
+            // 기존 리포트 파일 처리
+            try {
+              await processReportFile(existingReportFile);
+              
+              // 진행률 업데이트
+              const currentProgress = scanProgress.get(scanId);
+              if (currentProgress) {
+                currentProgress.toolVet = 100;
+                currentProgress.toolVetCompleted = true;
+                scanProgress.set(scanId, currentProgress);
+              }
+              
+              console.log('기존 TOOL-VET 리포트 파일 사용 완료 (스캔 스킵)');
+            } catch (reportError) {
+              console.error('기존 리포트 파일 처리 오류:', reportError);
+              // 오류가 발생하면 새로 스캔 실행
+              console.log('기존 리포트 파일 처리 실패, 새로 스캔 실행...');
+              existingReportFile = null; // 새로 스캔하도록 설정
+            }
+          }
+          
+          // 기존 리포트 파일이 없거나 처리 실패한 경우에만 새로 스캔 실행
+          console.log(`[TOOL-VET] 기존 리포트 파일 확인 결과: ${existingReportFile ? `발견됨 (${existingReportFile})` : '없음 - 새로 스캔 실행'}`);
+          console.log(`[TOOL-VET] ========== 새로 스캔 실행 시작 ==========`);
+          console.log(`[TOOL-VET] existingReportFile 값: ${existingReportFile}`);
+          console.log(`[TOOL-VET] !existingReportFile 조건: ${!existingReportFile}`);
+          if (!existingReportFile) {
+            console.log(`[TOOL-VET] ✅ 스캔 실행 블록 진입 성공!`);
+            // 호스트의 output 디렉토리 확인 및 생성
+            try {
+              if (!fs.existsSync(TOOL_VET_OUTPUT_DIR)) {
+                await fs.mkdir(TOOL_VET_OUTPUT_DIR, { recursive: true });
+                console.log(`[TOOL-VET] 호스트 output 디렉토리 생성: ${TOOL_VET_OUTPUT_DIR}`);
+              }
+              // 권한 확인 (읽기/쓰기 가능한지)
+              await fs.access(TOOL_VET_OUTPUT_DIR, fs.constants.R_OK | fs.constants.W_OK);
+            } catch (dirError) {
+              console.error(`[TOOL-VET] output 디렉토리 확인/생성 실패: ${dirError.message}`);
+              // 디렉토리 문제가 있어도 계속 진행 (컨테이너 내부에서 생성 시도)
+            }
+            
+            // 컨테이너 내부의 output 디렉토리 생성 및 권한 설정
+            try {
+              // 먼저 디렉토리 존재 여부 확인
+              const checkArgs = ['exec', TOOL_VET_CONTAINER_NAME, 'test', '-d', '/app/output'];
+              const checkProcess = spawn('docker', checkArgs, { cwd: TOOL_VET_ROOT });
+              let dirExists = false;
+              await new Promise((resolve) => {
+                checkProcess.on('close', (code) => {
+                  dirExists = code === 0;
+                  resolve();
+                });
+                checkProcess.on('error', () => resolve());
               });
               
-              checkToolVetProcess.on('error', (error) => {
-                reject(error);
+              if (!dirExists) {
+                const mkdirOutputArgs = ['exec', TOOL_VET_CONTAINER_NAME, 'mkdir', '-p', '/app/output'];
+                const mkdirOutputProcess = spawn('docker', mkdirOutputArgs, { cwd: TOOL_VET_ROOT });
+                await new Promise((resolve) => {
+                  mkdirOutputProcess.on('close', () => resolve());
+                  mkdirOutputProcess.on('error', () => resolve());
+                });
+              }
+              
+              // 권한 설정 시도 (볼륨 마운트로 인해 실패할 수 있지만 시도)
+              const chmodArgs = ['exec', TOOL_VET_CONTAINER_NAME, 'chmod', '-R', '777', '/app/output'];
+              const chmodProcess = spawn('docker', chmodArgs, { cwd: TOOL_VET_ROOT });
+              let chmodSuccess = false;
+              await new Promise((resolve) => {
+                chmodProcess.on('close', (code) => {
+                  chmodSuccess = code === 0;
+                  resolve();
+                });
+                chmodProcess.on('error', () => resolve());
               });
-            });
+              
+              if (chmodSuccess) {
+                console.log(`[TOOL-VET] 컨테이너 내부 output 디렉토리 권한 설정 완료`);
+              } else {
+                console.log(`[TOOL-VET] 컨테이너 내부 output 디렉토리 권한 설정 실패 (볼륨 마운트로 인한 제한일 수 있음, 계속 진행)`);
+              }
+            } catch (containerDirError) {
+              console.error(`[TOOL-VET] 컨테이너 내부 output 디렉토리 설정 중 오류: ${containerDirError.message}`);
+              // 오류가 발생해도 계속 진행
+            }
             
-            if (!toolVetStdout.trim()) {
-              throw new Error(`Docker 컨테이너가 실행 중이 아닙니다: ${TOOL_VET_CONTAINER_NAME}. 컨테이너를 먼저 시작해주세요.`);
+            // TOOL-VET 컨테이너가 실행 중인지 확인
+            try {
+              const checkToolVetProcess = spawn('docker', [
+                'ps',
+                '--filter',
+                `name=${TOOL_VET_CONTAINER_NAME}`,
+                '--format',
+                '{{.Names}}'
+              ], {
+                cwd: TOOL_VET_ROOT
+              });
+              
+              let toolVetStdout = '';
+              let toolVetStderr = '';
+              
+              checkToolVetProcess.stdout.on('data', (data) => {
+                toolVetStdout += data.toString();
+              });
+              
+              checkToolVetProcess.stderr.on('data', (data) => {
+                toolVetStderr += data.toString();
+              });
+              
+              await new Promise((resolve, reject) => {
+                checkToolVetProcess.on('close', (code) => {
+                  if (code !== 0) {
+                    reject(new Error(`Docker 명령 실행 실패: ${toolVetStderr || '알 수 없는 오류'}`));
+                  } else {
+                    resolve();
+                  }
+                });
+                
+                checkToolVetProcess.on('error', (error) => {
+                  reject(error);
+                });
+              });
+              
+              if (!toolVetStdout.trim()) {
+                throw new Error(`Docker 컨테이너가 실행 중이 아닙니다: ${TOOL_VET_CONTAINER_NAME}. 컨테이너를 먼저 시작해주세요.`);
+              }
+            } catch (error) {
+              console.error(`TOOL-VET 컨테이너 확인 실패: ${error.message}`);
+              const currentProgress = scanProgress.get(scanId);
+              if (currentProgress) {
+                currentProgress.toolVet = 100;
+                currentProgress.toolVetCompleted = true;
+                currentProgress.toolVetError = `TOOL-VET 시작 실패: TOOL-VET 컨테이너가 실행 중이 아닙니다: ${TOOL_VET_CONTAINER_NAME}. 컨테이너를 먼저 시작해주세요.`;
+                scanProgress.set(scanId, currentProgress);
+              }
+              // 컨테이너가 없어도 계속 진행 (오류만 기록)
             }
-          } catch (error) {
-            console.error(`TOOL-VET 컨테이너 확인 실패: ${error.message}`);
-            const currentProgress = scanProgress.get(scanId);
-            if (currentProgress) {
-              currentProgress.toolVet = 100;
-              currentProgress.toolVetCompleted = true;
-              currentProgress.toolVetError = `TOOL-VET 시작 실패: TOOL-VET 컨테이너가 실행 중이 아닙니다: ${TOOL_VET_CONTAINER_NAME}. 컨테이너를 먼저 시작해주세요.`;
-              scanProgress.set(scanId, currentProgress);
+          
+          // MCP 서버 이름으로 API 키 조회 및 .env 파일 생성
+          // mcp_server_name이 없으면 github_url에서 추출 시도
+          let targetServerName = mcp_server_name;
+          if (!targetServerName && github_url) {
+            // GitHub URL에서 서버 이름 추출 (예: https://github.com/owner/repo -> repo)
+            const urlParts = github_url.split('/');
+            if (urlParts.length > 0) {
+              targetServerName = urlParts[urlParts.length - 1].replace('.git', '');
             }
-            // 컨테이너가 없어도 계속 진행 (오류만 기록)
+          }
+          
+          console.log(`[TOOL-VET] MCP 서버 이름: ${targetServerName || '(없음)'}`);
+          console.log(`[TOOL-VET] 사용자 ID: ${req.user ? req.user.id : '(없음)'}`);
+          
+          let envFilePath = null;
+          if (targetServerName && req.user && req.user.id) {
+            try {
+              // 사용자의 API 키 조회 (정확히 일치하는 서버 이름으로)
+              const apiKeys = db.prepare(`
+                SELECT field_name, field_value, mcp_server_name
+                FROM api_keys 
+                WHERE user_id = ? AND mcp_server_name = ?
+              `).all(req.user.id, targetServerName);
+              
+              console.log(`[TOOL-VET] MCP 서버 "${targetServerName}"에 대한 API 키 조회`);
+              console.log(`[TOOL-VET] 조회된 API 키 개수: ${apiKeys ? apiKeys.length : 0}`);
+              if (apiKeys && apiKeys.length > 0) {
+                console.log(`[TOOL-VET] API 키 필드명: ${apiKeys.map(k => `${k.mcp_server_name}:${k.field_name}`).join(', ')}`);
+                
+                // 임시 .env 파일 생성
+                const fs = require('fs');
+                const path = require('path');
+                const tempDir = path.join(TOOL_VET_ROOT, 'temp_env');
+                
+                // temp_env 디렉토리가 없으면 생성
+                if (!fs.existsSync(tempDir)) {
+                  fs.mkdirSync(tempDir, { recursive: true });
+                }
+                
+                // 고유한 파일명 생성 (scanId 사용)
+                envFilePath = path.join(tempDir, `${scanId}.env`);
+                
+                // .env 파일 내용 생성
+                const envContent = apiKeys.map(key => 
+                  `${key.field_name}=${key.field_value}`
+                ).join('\n');
+                
+                fs.writeFileSync(envFilePath, envContent, 'utf-8');
+                console.log(`[TOOL-VET] API 키 .env 파일 생성: ${envFilePath} (${apiKeys.length}개 키)`);
+                console.log(`[TOOL-VET] .env 파일 내용 (마스킹): ${apiKeys.map(k => `${k.field_name}=***`).join('\n')}`);
+              } else {
+                console.log(`[TOOL-VET] MCP 서버 "${targetServerName}"에 대한 API 키가 등록되지 않았습니다.`);
+                // 모든 API 키 조회 (디버깅용)
+                const allApiKeys = db.prepare(`
+                  SELECT mcp_server_name, field_name 
+                  FROM api_keys 
+                  WHERE user_id = ?
+                `).all(req.user.id);
+                console.log(`[TOOL-VET] 사용자의 전체 API 키 목록:`, allApiKeys.map(k => `${k.mcp_server_name}: ${k.field_name}`).join(', '));
+              }
+            } catch (envError) {
+              console.error('[TOOL-VET] API 키 .env 파일 생성 오류:', envError);
+              // 오류가 발생해도 TOOL-VET 실행은 계속 진행
+            }
+          } else {
+            console.log(`[TOOL-VET] API 키 조회 조건 불만족: targetServerName=${targetServerName}, userId=${req.user ? req.user.id : '없음'}`);
           }
           
           // docker exec로 실행
+          console.log(`[TOOL-VET] TOOL-VET 실행 준비: github_url="${github_url}"`);
           const toolVetArgs = [
             'exec',
             TOOL_VET_CONTAINER_NAME,
@@ -985,10 +1287,121 @@ const riskAssessmentController = {
             '--output-dir',
             '/app/output'
           ];
+          console.log(`[TOOL-VET] TOOL-VET 실행 인자 구성 완료: --git-url ${github_url}`);
           
-          console.log(`TOOL-VET 실행 명령: docker ${toolVetArgs.join(' ')}`);
+          // .env 파일이 있으면 --env-file 옵션 추가
+          if (envFilePath) {
+            // Docker 컨테이너 내부 경로로 변환
+            // TOOL-VET 컨테이너의 작업 디렉토리는 /app이므로 상대 경로 사용
+            // 또는 볼륨 마운트를 통해 전달 (docker-compose.yml에서 설정 필요)
+            const containerEnvPath = `/app/temp_env/${path.basename(envFilePath)}`;
+            
+            // Docker cp를 사용하여 파일을 컨테이너에 복사
+            try {
+              // 먼저 temp_env 디렉토리가 존재하는지 확인하고 없으면 생성
+              const mkdirArgs = ['exec', TOOL_VET_CONTAINER_NAME, 'mkdir', '-p', '/app/temp_env'];
+              const mkdirProcess = spawn('docker', mkdirArgs, { cwd: TOOL_VET_ROOT });
+              await new Promise((resolve) => {
+                mkdirProcess.on('close', () => resolve());
+                mkdirProcess.on('error', () => resolve()); // 오류 무시
+              });
+              
+              console.log(`[TOOL-VET] .env 파일 복사 시작: ${envFilePath} -> ${TOOL_VET_CONTAINER_NAME}:${containerEnvPath}`);
+              const copyArgs = ['cp', envFilePath, `${TOOL_VET_CONTAINER_NAME}:${containerEnvPath}`];
+              console.log(`[TOOL-VET] docker 명령: docker ${copyArgs.join(' ')}`);
+              const copyProcess = spawn('docker', copyArgs, { cwd: TOOL_VET_ROOT });
+              
+              await new Promise((resolve, reject) => {
+                let copyStdout = '';
+                let copyStderr = '';
+                
+                copyProcess.stdout.on('data', (data) => {
+                  copyStdout += data.toString();
+                  console.log(`[TOOL-VET] docker cp stdout: ${data.toString().trim()}`);
+                });
+                
+                copyProcess.stderr.on('data', (data) => {
+                  copyStderr += data.toString();
+                  console.error(`[TOOL-VET] docker cp stderr: ${data.toString().trim()}`);
+                });
+                
+                copyProcess.on('close', (code) => {
+                  if (code === 0) {
+                    console.log(`[TOOL-VET] .env 파일을 컨테이너에 복사 완료: ${containerEnvPath}`);
+                    // 복사 후 파일이 실제로 존재하는지 확인
+                    const checkArgs = ['exec', TOOL_VET_CONTAINER_NAME, 'test', '-f', containerEnvPath];
+                    const checkProcess = spawn('docker', checkArgs, { cwd: TOOL_VET_ROOT });
+                    checkProcess.on('close', (checkCode) => {
+                      if (checkCode === 0) {
+                        console.log(`[TOOL-VET] .env 파일 존재 확인: ${containerEnvPath}`);
+                      } else {
+                        console.error(`[TOOL-VET] .env 파일 존재 확인 실패: ${containerEnvPath}`);
+                      }
+                      resolve();
+                    });
+                    checkProcess.on('error', (checkError) => {
+                      console.error(`[TOOL-VET] .env 파일 확인 오류: ${checkError.message}`);
+                      resolve();
+                    });
+                  } else {
+                    console.error(`[TOOL-VET] .env 파일 복사 실패 (종료 코드: ${code}): ${copyStderr || '알 수 없는 오류'}`);
+                    resolve(); // 실패해도 계속 진행
+                  }
+                });
+                
+                copyProcess.on('error', (error) => {
+                  console.error(`[TOOL-VET] .env 파일 복사 오류: ${error.message}`);
+                  resolve(); // 오류가 발생해도 계속 진행
+                });
+              });
+            } catch (copyError) {
+              console.error(`[TOOL-VET] .env 파일 복사 중 예외: ${copyError.message}`);
+            }
+            
+            toolVetArgs.push('--env-file', containerEnvPath);
+            console.log(`[TOOL-VET] TOOL-VET 실행 인자에 .env 파일 추가: --env-file ${containerEnvPath}`);
+          }
+          
+          // repo_name 추출 함수 (TOOL-VET의 extract_repo_name과 동일한 로직)
+          const extractRepoNameFromUrl = (gitUrl) => {
+            if (!gitUrl) return null;
+            let url = gitUrl.replace(/\/$/, '');
+            if (url.endsWith('.git')) {
+              url = url.slice(0, -4);
+            }
+            const parts = url.split('/');
+            return parts[parts.length - 1];
+          };
+          
+          // expectedRepoName 추출: github_url 우선, 없으면 serverName, 없으면 scan_path에서 추출
+          let expectedRepoName = null;
+          if (github_url && isValidGithubUrl(github_url)) {
+            expectedRepoName = extractRepoNameFromUrl(github_url);
+          } else if (serverName) {
+            // GitHub URL이 아닌 경우 serverName 사용
+            expectedRepoName = serverName;
+          } else if (scanPath) {
+            // scan_path에서 추출
+            if (isValidGithubUrl(scanPath)) {
+              expectedRepoName = extractRepoNameFromUrl(scanPath);
+            } else {
+              // GitHub URL이 아닌 경우 scan_path 자체 사용
+              expectedRepoName = scanPath.replace(/\.git$/, '');
+            }
+          }
+          
+          const expectedReportFile = expectedRepoName ? `${expectedRepoName}-report.json` : 'unknown-report.json';
+          
+          console.log(`[TOOL-VET] 실행 명령: docker ${toolVetArgs.join(' ')}`);
+          console.log(`[TOOL-VET] 분석 대상 GitHub URL: ${github_url}`);
+          console.log(`[TOOL-VET] 분석 대상 서버 이름: ${serverName}`);
+          console.log(`[TOOL-VET] 분석 대상 scan_path: ${scanPath}`);
+          console.log(`[TOOL-VET] 추출된 repo_name: ${expectedRepoName}`);
+          console.log(`[TOOL-VET] 예상 리포트 파일: ${expectedReportFile}`);
           
           const toolVetPromise = new Promise((resolve, reject) => {
+            console.log(`[TOOL-VET] 최종 실행 명령어: docker ${toolVetArgs.join(' ')}`);
+            console.log(`[TOOL-VET] 작업 디렉토리: ${TOOL_VET_ROOT}`);
             const toolVetProcess = spawn('docker', toolVetArgs, { cwd: TOOL_VET_ROOT });
             
             const currentProgress = scanProgress.get(scanId);
@@ -996,6 +1409,21 @@ const riskAssessmentController = {
               currentProgress.toolVet = 1; // 시작됨을 표시
               scanProgress.set(scanId, currentProgress);
             }
+            
+            let toolVetStdout = '';
+            let toolVetStderr = '';
+            
+            toolVetProcess.stdout.on('data', (data) => {
+              const output = data.toString();
+              toolVetStdout += output;
+              console.log(`[TOOL-VET] stdout: ${output.trim()}`);
+            });
+            
+            toolVetProcess.stderr.on('data', (data) => {
+              const output = data.toString();
+              toolVetStderr += output;
+              console.log(`[TOOL-VET] stderr: ${output.trim()}`);
+            });
             
             let toolVetStartTime = Date.now();
             const toolVetEstimatedDuration = 300000; // 5분 예상
@@ -1013,12 +1441,16 @@ const riskAssessmentController = {
               }
             }, 2000); // 2초마다 업데이트
             
+            // 진행률 파싱 시도
             toolVetProcess.stdout.on('data', (data) => {
-              const output = data.toString().trim();
-              console.log('[TOOL-VET]', output);
+              const output = data.toString();
+              toolVetStdout += output;
+              const trimmed = output.trim();
+              if (trimmed) {
+                console.log('[TOOL-VET] stdout:', trimmed);
+              }
               
-              // 진행률 파싱 시도
-              const progressMatch = output.match(/(\d+)%/);
+              const progressMatch = trimmed.match(/(\d+)%/);
               if (progressMatch) {
                 const progress = parseInt(progressMatch[1]);
                 const currentProgress = scanProgress.get(scanId);
@@ -1030,11 +1462,37 @@ const riskAssessmentController = {
             });
             
             toolVetProcess.stderr.on('data', (data) => {
-              console.error('[TOOL-VET Error]', data.toString().trim());
+              const output = data.toString();
+              toolVetStderr += output;
+              const trimmed = output.trim();
+              if (trimmed) {
+                console.error('[TOOL-VET Error]', trimmed);
+              }
             });
             
             toolVetProcess.on('close', async (code) => {
               clearInterval(toolVetProgressInterval);
+              
+              // .env 파일 정리 (분석 완료 후 삭제)
+              if (envFilePath) {
+                try {
+                  const fsSync = require('fs');
+                  if (fsSync.existsSync(envFilePath)) {
+                    fsSync.unlinkSync(envFilePath);
+                    console.log(`임시 .env 파일 삭제: ${envFilePath}`);
+                  }
+                  
+                  // 컨테이너 내부 파일도 삭제 시도
+                  const containerEnvPath = `/app/temp_env/${path.basename(envFilePath)}`;
+                  const rmArgs = ['exec', TOOL_VET_CONTAINER_NAME, 'rm', '-f', containerEnvPath];
+                  const rmProcess = spawn('docker', rmArgs, { cwd: TOOL_VET_ROOT });
+                  rmProcess.on('close', () => {
+                    // 삭제 실패해도 무시
+                  });
+                } catch (cleanupError) {
+                  console.warn(`.env 파일 정리 오류 (무시): ${cleanupError.message}`);
+                }
+              }
               
               const currentProgress = scanProgress.get(scanId);
               if (currentProgress) {
@@ -1045,16 +1503,470 @@ const riskAssessmentController = {
               
               if (code === 0) {
                 console.log('TOOL-VET 분석 완료');
+                
+                // TOOL-VET 결과 파일 파싱 및 저장
+                try {
+                  // report.json 파일 찾기
+                  const reportFiles = await fs.readdir(TOOL_VET_OUTPUT_DIR);
+                  
+                  // 정확한 리포트 파일 찾기: scan_path나 mcp_server_name 기반
+                  let reportFile = null;
+                  
+                  // 1. expectedRepoName 기반으로 정확히 매칭되는 파일 찾기
+                  if (expectedRepoName) {
+                    const expectedReportFile = `${expectedRepoName}-report.json`;
+                    if (reportFiles.includes(expectedReportFile)) {
+                      reportFile = expectedReportFile;
+                      console.log(`[TOOL-VET] 예상 리포트 파일 발견: ${reportFile}`);
+                    }
+                  }
+                  
+                  // 2. serverName 기반으로 찾기 (GitHub URL이 아닌 경우)
+                  if (!reportFile && serverName) {
+                    const serverReportFile = `${serverName}-report.json`;
+                    if (reportFiles.includes(serverReportFile)) {
+                      reportFile = serverReportFile;
+                      console.log(`[TOOL-VET] 서버 이름 기반 리포트 파일 발견: ${reportFile}`);
+                    }
+                  }
+                  
+                  // 3. scan_path에서 추출한 이름으로 찾기
+                  if (!reportFile && scanPath) {
+                    let scanPathName = scanPath;
+                    if (isValidGithubUrl(scanPath)) {
+                      // GitHub URL인 경우 repo 이름 추출
+                      const urlParts = scanPath.split('/');
+                      scanPathName = urlParts[urlParts.length - 1].replace('.git', '');
+                    }
+                    const scanPathReportFile = `${scanPathName}-report.json`;
+                    if (reportFiles.includes(scanPathReportFile)) {
+                      reportFile = scanPathReportFile;
+                      console.log(`[TOOL-VET] scan_path 기반 리포트 파일 발견: ${reportFile}`);
+                    }
+                  }
+                  
+                  // 4. 최신 파일 사용 (fallback)
+                  if (!reportFile) {
+                    const reportJsonFiles = reportFiles.filter(f => f.endsWith('-report.json'));
+                    if (reportJsonFiles.length > 0) {
+                      // 수정 시간순으로 정렬하여 최신 파일 선택
+                      const reportFilesWithStats = [];
+                      for (const file of reportJsonFiles) {
+                        const filePath = path.join(TOOL_VET_OUTPUT_DIR, file);
+                        try {
+                          const stats = await fs.stat(filePath);
+                          if (stats.size > 0) {
+                            reportFilesWithStats.push({ file, mtime: stats.mtime });
+                          }
+                        } catch (fileError) {
+                          // 파일 접근 실패, 무시
+                        }
+                      }
+                      if (reportFilesWithStats.length > 0) {
+                        reportFilesWithStats.sort((a, b) => b.mtime - a.mtime);
+                        reportFile = reportFilesWithStats[0].file;
+                        console.log(`[TOOL-VET] 최신 리포트 파일 사용 (fallback): ${reportFile}`);
+                      }
+                    }
+                  }
+                  
+                  // 5. 마지막 fallback: report.json으로 끝나는 파일 찾기
+                  if (!reportFile) {
+                    reportFile = reportFiles.find(f => f === 'report.json' || f.endsWith('report.json'));
+                  }
+                  
+                  if (reportFile) {
+                    const reportPath = path.join(TOOL_VET_OUTPUT_DIR, reportFile);
+                    console.log(`TOOL-VET 리포트 파일 경로: ${reportPath}`);
+                    const reportData = JSON.parse(await fs.readFile(reportPath, 'utf-8'));
+                    
+                    console.log(`TOOL-VET 리포트 파일 발견: ${reportFile}`);
+                    
+                    // MCP 서버 이름 추출 (reportFile에서 추출: {server-name}-report.json)
+                    let mcpServerName = null;
+                    if (reportFile.includes('-report.json')) {
+                      mcpServerName = reportFile.replace('-report.json', '');
+                    } else if (serverName) {
+                      mcpServerName = serverName;
+                    } else if (github_url) {
+                      // GitHub URL에서 추출
+                      const urlParts = github_url.split('/');
+                      if (urlParts.length > 0) {
+                        mcpServerName = urlParts[urlParts.length - 1].replace('.git', '');
+                      }
+                    }
+                    
+                    // 리포트 요약 정보 계산
+                    let totalTools = 0;
+                    let totalEndpoints = 0;
+                    let totalVulns = 0;
+                    
+                    if (reportData.tools && Array.isArray(reportData.tools)) {
+                      totalTools = reportData.tools.length;
+                      for (const tool of reportData.tools) {
+                        if (tool.api_endpoints && Array.isArray(tool.api_endpoints)) {
+                          totalEndpoints += tool.api_endpoints.length;
+                          for (const endpoint of tool.api_endpoints) {
+                            if (endpoint.vulnerabilities && Array.isArray(endpoint.vulnerabilities)) {
+                              totalVulns += endpoint.vulnerabilities.length;
+                            }
+                          }
+                        }
+                      }
+                    }
+                    
+                    // summary가 있으면 사용 (더 정확할 수 있음)
+                    if (reportData.summary) {
+                      if (reportData.summary.total_tools !== undefined) {
+                        totalTools = reportData.summary.total_tools;
+                      }
+                      if (reportData.summary.total_vulnerabilities !== undefined) {
+                        totalVulns = reportData.summary.total_vulnerabilities;
+                      }
+                    }
+                    
+                    // 기존 tool validation 리포트 삭제 (같은 scan_path의 이전 스캔 결과)
+                    try {
+                      const deleteReportStmt = db.prepare('DELETE FROM tool_validation_reports WHERE scan_path = ?');
+                      deleteReportStmt.run(scanPath);
+                      console.log(`기존 Tool Validation 리포트 삭제 완료: ${scanPath}`);
+                    } catch (deleteError) {
+                      console.error('기존 Tool Validation 리포트 삭제 오류:', deleteError);
+                    }
+                    
+                    // 리포트 전체 저장
+                    try {
+                      const insertReportStmt = db.prepare(`
+                        INSERT INTO tool_validation_reports (
+                          scan_id, scan_path, mcp_server_name, scan_timestamp,
+                          report_data, total_tools, total_endpoints, total_vulnerabilities
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                      `);
+                      
+                      insertReportStmt.run(
+                        scanId,
+                        scanPath,
+                        mcpServerName,
+                        getKoreaTimeSQLite(),
+                        JSON.stringify(reportData),
+                        totalTools,
+                        totalEndpoints,
+                        totalVulns
+                      );
+                      
+                      console.log(`Tool Validation 리포트 저장 완료: ${mcpServerName || 'unknown'} (tools: ${totalTools}, endpoints: ${totalEndpoints}, vulnerabilities: ${totalVulns})`);
+                    } catch (reportInsertError) {
+                      console.error('Tool Validation 리포트 저장 오류:', reportInsertError);
+                    }
+                    
+                    // 기존 tool validation 취약점 데이터 삭제 (같은 scan_path의 이전 스캔 결과)
+                    try {
+                      const deleteStmt = db.prepare('DELETE FROM tool_validation_vulnerabilities WHERE scan_path = ?');
+                      deleteStmt.run(scanPath);
+                      console.log(`기존 Tool Validation 취약점 데이터 삭제 완료: ${scanPath}`);
+                    } catch (deleteError) {
+                      console.error('기존 Tool Validation 취약점 데이터 삭제 오류:', deleteError);
+                    }
+                    
+                    // tools 배열 순회하며 취약점 데이터 저장
+                    if (reportData.tools && Array.isArray(reportData.tools)) {
+                      console.log(`[TOOL-VET] tools 배열 발견: ${reportData.tools.length}개 도구`);
+                      const insertStmt = db.prepare(`
+                        INSERT INTO tool_validation_vulnerabilities (
+                          scan_id, scan_path, scan_timestamp,
+                          tool_name, host, method, path,
+                          category_code, category_name, title, description, evidence, recommendation, raw_data
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      `);
+                      
+                      let savedVulns = 0;
+                      let totalEndpoints = 0;
+                      for (const tool of reportData.tools) {
+                        const toolName = tool.name || '';
+                        
+                        // api_endpoints 배열 순회
+                        if (tool.api_endpoints && Array.isArray(tool.api_endpoints)) {
+                          totalEndpoints += tool.api_endpoints.length;
+                          for (const endpoint of tool.api_endpoints) {
+                            const host = endpoint.host || '';
+                            const method = endpoint.method || '';
+                            const path = endpoint.path || '';
+                            
+                            // vulnerabilities 배열 순회
+                            if (endpoint.vulnerabilities && Array.isArray(endpoint.vulnerabilities)) {
+                              for (const vuln of endpoint.vulnerabilities) {
+                                try {
+                                  insertStmt.run(
+                                    scanId,
+                                    scanPath,
+                                    getKoreaTimeSQLite(),
+                                    toolName,
+                                    host,
+                                    method,
+                                    path,
+                                    vuln.category_code || '',
+                                    vuln.category_name || '',
+                                    vuln.title || '',
+                                    vuln.description || '',
+                                    vuln.evidence || '',
+                                    vuln.recommendation || '',
+                                    JSON.stringify(vuln)
+                                  );
+                                  savedVulns++;
+                                } catch (insertError) {
+                                  console.error('Tool Validation 취약점 저장 오류:', insertError);
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                      
+                      console.log(`[TOOL-VET] Tool Validation 취약점 ${savedVulns}개 저장 완료 (총 ${totalEndpoints}개 엔드포인트 확인)`);
+                      if (savedVulns === 0) {
+                        console.log(`[TOOL-VET] 취약점이 0개이지만 리포트는 저장되었습니다. (scan_path: ${scanPath})`);
+                      }
+                    } else {
+                      console.log('[TOOL-VET] TOOL-VET 리포트에 tools 배열이 없습니다.');
+                    }
+                  } else {
+                    console.log('TOOL-VET 리포트 파일을 찾을 수 없습니다.');
+                    
+                    // 리포트 파일을 찾지 못했을 때, 모든 리포트 파일 확인
+                    try {
+                      const allReportFiles = await fs.readdir(TOOL_VET_OUTPUT_DIR);
+                      const reportJsonFiles = allReportFiles.filter(f => f.endsWith('-report.json'));
+                      console.log(`발견된 리포트 파일들: ${reportJsonFiles.join(', ')}`);
+                      
+                      if (reportJsonFiles.length > 0) {
+                        // 가장 최근 파일 사용
+                        const reportFilesWithStats = [];
+                        for (const file of reportJsonFiles) {
+                          const filePath = path.join(TOOL_VET_OUTPUT_DIR, file);
+                          try {
+                            const stats = await fs.stat(filePath);
+                            if (stats.size > 0) {
+                              reportFilesWithStats.push({ file, filePath, mtime: stats.mtime });
+                            }
+                          } catch (fileError) {
+                            // 파일 접근 실패, 무시
+                          }
+                        }
+                        // 수정 시간순으로 정렬 (최신 파일이 먼저)
+                        reportFilesWithStats.sort((a, b) => b.mtime - a.mtime);
+                        
+                        if (reportFilesWithStats.length > 0) {
+                          const latestReportFile = reportFilesWithStats[0].file;
+                          console.log(`대체 리포트 파일 사용: ${latestReportFile}`);
+                          
+                          // 리포트 파일 처리 (위의 로직 재사용)
+                          const reportPath = path.join(TOOL_VET_OUTPUT_DIR, latestReportFile);
+                          const reportData = JSON.parse(await fs.readFile(reportPath, 'utf-8'));
+                          
+                          // MCP 서버 이름 추출
+                          let mcpServerName = null;
+                          if (latestReportFile.includes('-report.json')) {
+                            mcpServerName = latestReportFile.replace('-report.json', '');
+                          } else if (serverName) {
+                            mcpServerName = serverName;
+                          } else if (github_url) {
+                            const urlParts = github_url.split('/');
+                            if (urlParts.length > 0) {
+                              mcpServerName = urlParts[urlParts.length - 1].replace('.git', '');
+                            }
+                          }
+                          
+                          // 리포트 요약 정보 계산
+                          let totalTools = 0;
+                          let totalEndpoints = 0;
+                          let totalVulns = 0;
+                          
+                          if (reportData.tools && Array.isArray(reportData.tools)) {
+                            totalTools = reportData.tools.length;
+                            for (const tool of reportData.tools) {
+                              if (tool.api_endpoints && Array.isArray(tool.api_endpoints)) {
+                                totalEndpoints += tool.api_endpoints.length;
+                                for (const endpoint of tool.api_endpoints) {
+                                  if (endpoint.vulnerabilities && Array.isArray(endpoint.vulnerabilities)) {
+                                    totalVulns += endpoint.vulnerabilities.length;
+                                  }
+                                }
+                              }
+                            }
+                          }
+                          
+                          // summary가 있으면 사용
+                          if (reportData.summary) {
+                            if (reportData.summary.total_tools !== undefined) {
+                              totalTools = reportData.summary.total_tools;
+                            }
+                            if (reportData.summary.total_vulnerabilities !== undefined) {
+                              totalVulns = reportData.summary.total_vulnerabilities;
+                            }
+                          }
+                          
+                          // 기존 tool validation 리포트 삭제
+                          try {
+                            const deleteReportStmt = db.prepare('DELETE FROM tool_validation_reports WHERE scan_path = ?');
+                            deleteReportStmt.run(scanPath);
+                            console.log(`기존 Tool Validation 리포트 삭제 완료: ${scanPath}`);
+                          } catch (deleteError) {
+                            console.error('기존 Tool Validation 리포트 삭제 오류:', deleteError);
+                          }
+                          
+                          // 리포트 전체 저장
+                          try {
+                            const insertReportStmt = db.prepare(`
+                              INSERT INTO tool_validation_reports (
+                                scan_id, scan_path, mcp_server_name, scan_timestamp,
+                                report_data, total_tools, total_endpoints, total_vulnerabilities
+                              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            `);
+                            
+                            insertReportStmt.run(
+                              scanId,
+                              scanPath,
+                              mcpServerName,
+                              getKoreaTimeSQLite(),
+                              JSON.stringify(reportData),
+                              totalTools,
+                              totalEndpoints,
+                              totalVulns
+                            );
+                            
+                            console.log(`Tool Validation 리포트 저장 완료: ${mcpServerName || 'unknown'} (tools: ${totalTools}, endpoints: ${totalEndpoints}, vulnerabilities: ${totalVulns})`);
+                          } catch (reportInsertError) {
+                            console.error('Tool Validation 리포트 저장 오류:', reportInsertError);
+                          }
+                          
+                          // 취약점 데이터 저장
+                          try {
+                            const deleteStmt = db.prepare('DELETE FROM tool_validation_vulnerabilities WHERE scan_path = ?');
+                            deleteStmt.run(scanPath);
+                            
+                            if (reportData.tools && Array.isArray(reportData.tools)) {
+                              const insertStmt = db.prepare(`
+                                INSERT INTO tool_validation_vulnerabilities (
+                                  scan_id, scan_path, scan_timestamp,
+                                  tool_name, host, method, path,
+                                  category_code, category_name, title, description, evidence, recommendation, raw_data
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              `);
+                              
+                              let savedVulns = 0;
+                              for (const tool of reportData.tools) {
+                                const toolName = tool.name || '';
+                                
+                                if (tool.api_endpoints && Array.isArray(tool.api_endpoints)) {
+                                  for (const endpoint of tool.api_endpoints) {
+                                    const host = endpoint.host || '';
+                                    const method = endpoint.method || '';
+                                    const path = endpoint.path || '';
+                                    
+                                    if (endpoint.vulnerabilities && Array.isArray(endpoint.vulnerabilities)) {
+                                      for (const vuln of endpoint.vulnerabilities) {
+                                        try {
+                                          insertStmt.run(
+                                            scanId,
+                                            scanPath,
+                                            getKoreaTimeSQLite(),
+                                            toolName,
+                                            host,
+                                            method,
+                                            path,
+                                            vuln.category_code || '',
+                                            vuln.category_name || '',
+                                            vuln.title || '',
+                                            vuln.description || '',
+                                            vuln.evidence || '',
+                                            vuln.recommendation || '',
+                                            JSON.stringify(vuln)
+                                          );
+                                          savedVulns++;
+                                        } catch (insertError) {
+                                          console.error('Tool Validation 취약점 저장 오류:', insertError);
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                              
+                              console.log(`Tool Validation 취약점 ${savedVulns}개 저장 완료`);
+                            }
+                          } catch (vulnError) {
+                            console.error('Tool Validation 취약점 저장 오류:', vulnError);
+                          }
+                        }
+                      }
+                    } catch (fallbackError) {
+                      console.error('대체 리포트 파일 처리 오류:', fallbackError);
+                    }
+                  }
+                } catch (parseError) {
+                  console.error('TOOL-VET 리포트 파싱 오류:', parseError);
+                  // 오류가 발생해도 분석은 완료된 것으로 처리
+                }
+                
                 resolve();
               } else {
                 console.error(`TOOL-VET 분석 실패 (종료 코드: ${code})`);
+                
+                // 오류 메시지 구성
+                let errorMessage = `TOOL-VET 분석 실패 (종료 코드: ${code})`;
+                
+                // stderr에서 오류 메시지 추출 시도
+                if (toolVetStderr.trim()) {
+                  const stderrLines = toolVetStderr.trim().split('\n').filter(line => line.trim());
+                  const lastErrorLine = stderrLines[stderrLines.length - 1];
+                  
+                  // 마지막 오류 라인에서 의미있는 메시지 추출
+                  if (lastErrorLine && lastErrorLine.length > 0) {
+                    // 너무 긴 메시지는 잘라내기
+                    const shortError = lastErrorLine.length > 200 
+                      ? lastErrorLine.substring(0, 200) + '...' 
+                      : lastErrorLine;
+                    errorMessage += `. 오류: ${shortError}`;
+                  } else {
+                    // stderr 전체가 짧으면 전체 사용
+                    const shortStderr = toolVetStderr.trim().length > 200 
+                      ? toolVetStderr.trim().substring(0, 200) + '...' 
+                      : toolVetStderr.trim();
+                    if (shortStderr) {
+                      errorMessage += `. 오류: ${shortStderr}`;
+                    }
+                  }
+                } else if (toolVetStdout.trim()) {
+                  // stderr가 없으면 stdout에서 오류 찾기
+                  const stdoutLines = toolVetStdout.trim().split('\n').filter(line => 
+                    line.toLowerCase().includes('error') || 
+                    line.toLowerCase().includes('fail') ||
+                    line.toLowerCase().includes('exception')
+                  );
+                  if (stdoutLines.length > 0) {
+                    const lastErrorLine = stdoutLines[stdoutLines.length - 1];
+                    const shortError = lastErrorLine.length > 200 
+                      ? lastErrorLine.substring(0, 200) + '...' 
+                      : lastErrorLine;
+                    errorMessage += `. 오류: ${shortError}`;
+                  } else {
+                    errorMessage += '. 프로젝트 타입을 감지할 수 없거나 지원되지 않는 프로젝트입니다.';
+                  }
+                } else {
+                  errorMessage += '. 프로젝트 타입을 감지할 수 없거나 지원되지 않는 프로젝트입니다.';
+                }
+                
                 const currentProgress = scanProgress.get(scanId);
                 if (currentProgress) {
-                  currentProgress.toolVet = 100;
-                  currentProgress.toolVetCompleted = true;
-                  currentProgress.toolVetError = `TOOL-VET 분석 실패 (종료 코드: ${code}). 프로젝트 타입을 감지할 수 없거나 지원되지 않는 프로젝트입니다.`;
+                  currentProgress.toolVetError = errorMessage;
                   scanProgress.set(scanId, currentProgress);
                 }
+                
+                // 상세 로그 출력
+                console.error('[TOOL-VET 상세 오류]');
+                console.error('stdout:', toolVetStdout);
+                console.error('stderr:', toolVetStderr);
+                
                 resolve(); // 실패해도 resolve (오류는 무시하지만 오류 정보는 저장)
               }
             });
@@ -1075,8 +1987,13 @@ const riskAssessmentController = {
           });
           
           scanPromises.push(toolVetPromise);
+          console.log(`[TOOL-VET] TOOL-VET Promise가 scanPromises에 추가됨`);
+          } else {
+            console.log(`[TOOL-VET] 기존 리포트 파일이 있어서 TOOL-VET 스캔을 스킵합니다`);
+          } // if (!existingReportFile) 블록 닫기
         } catch (error) {
-          console.error('TOOL-VET 분석 시작 실패:', error.message);
+          console.error('[TOOL-VET] TOOL-VET 분석 시작 실패:', error.message);
+          console.error('[TOOL-VET] 에러 스택:', error.stack);
           const currentProgress = scanProgress.get(scanId);
           if (currentProgress) {
             currentProgress.toolVet = 100;
@@ -1085,7 +2002,15 @@ const riskAssessmentController = {
             scanProgress.set(scanId, currentProgress);
           }
         }
+      } else {
+        console.log(`[TOOL-VET] ❌ TOOL-VET 실행 조건 불만족: github_url="${github_url}", isValidGithubUrl=${github_url ? isValidGithubUrl(github_url) : false}`);
+        console.log(`[TOOL-VET] github_url 타입: ${typeof github_url}, 값: ${github_url}`);
+        if (github_url) {
+          console.log(`[TOOL-VET] isValidGithubUrl 함수 결과: ${isValidGithubUrl(github_url)}`);
+        }
       }
+      
+      console.log(`[SCAN] 총 ${scanPromises.length}개의 스캔 Promise가 실행됩니다 (Bomtori: ${hasBomtori ? '예' : '아니오'}, Scanner: 예, TOOL-VET: ${hasToolVet ? '예' : '아니오'})`);
       
       // 모든 스캔을 동시에 시작하고 완료될 때까지 대기
       try {
@@ -1669,6 +2594,535 @@ const riskAssessmentController = {
       res.status(500).json({
         success: false,
         message: '스캔 결과 조회 중 오류가 발생했습니다.'
+      });
+    }
+  },
+
+  // Tool Validation 취약점 조회
+  getToolValidationVulnerabilities: async (req, res) => {
+    try {
+      const { scan_id, scan_path } = req.query;
+      
+      let vulnerabilities = [];
+      
+      if (scan_id) {
+        // scan_id로 조회
+        vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_id);
+      } else if (scan_path) {
+        // scan_path 정규화 (GitHub URL의 경우 .git 제거, 소문자 변환)
+        let normalizedScanPath = scan_path;
+        if (isValidGithubUrl(scan_path)) {
+          normalizedScanPath = scan_path.replace(/\.git$/i, '').toLowerCase();
+        }
+        
+        // 정규화된 scan_path로 최신 스캔 결과 조회
+        // 먼저 정확히 일치하는 것 찾기
+        let latestScan = db.prepare('SELECT DISTINCT scan_id FROM tool_validation_vulnerabilities WHERE LOWER(REPLACE(scan_path, \'.git\', \'\')) = ? ORDER BY scan_timestamp DESC LIMIT 1').get(normalizedScanPath);
+        if (latestScan && latestScan.scan_id) {
+          vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(latestScan.scan_id);
+        } else {
+          // 정규화된 scan_path로 직접 조회 시도 (scan_id가 없는 경우)
+          vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE LOWER(REPLACE(scan_path, \'.git\', \'\')) = ? ORDER BY scan_timestamp DESC, id DESC').all(normalizedScanPath);
+        }
+        
+        // 데이터베이스에 데이터가 없으면, 리포트 파일에서 직접 로드 시도
+        if (vulnerabilities.length === 0 && scan_path) {
+          try {
+            // TOOL-VET의 extract_repo_name과 동일한 로직으로 repo_name 추출
+            const extractRepoNameFromUrl = (gitUrl) => {
+              if (!gitUrl) return null;
+              let url = gitUrl.replace(/\/$/, '');
+              if (url.endsWith('.git')) {
+                url = url.slice(0, -4);
+              }
+              const parts = url.split('/');
+              return parts[parts.length - 1];
+            };
+            
+            let repoName = null;
+            let possibleRepoNames = [];
+            
+            if (isValidGithubUrl(scan_path)) {
+              // GitHub URL인 경우: TOOL-VET의 extract_repo_name과 동일한 로직 사용
+              repoName = extractRepoNameFromUrl(scan_path);
+              
+              // 여러 가지 가능한 repoName 패턴 시도 (대소문자 변형 포함)
+              possibleRepoNames = [
+                repoName, // 원본 (대소문자 유지)
+                repoName.toLowerCase(), // 소문자
+                repoName.replace(/[^a-zA-Z0-9_-]/g, '_'),
+                repoName.replace(/[^a-zA-Z0-9_-]/g, '-'),
+                repoName.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_'),
+                repoName.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '-'),
+              ];
+            } else {
+              // GitHub URL이 아닌 경우: scan_path 자체를 repoName으로 사용
+              // 예: "notion-mcp-server" 같은 MCP 서버 이름
+              repoName = scan_path.replace(/\.git$/, '');
+              possibleRepoNames = [
+                repoName,
+                repoName.toLowerCase(),
+                repoName.replace(/[^a-zA-Z0-9_-]/g, '_'),
+                repoName.replace(/[^a-zA-Z0-9_-]/g, '-'),
+                repoName.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_'),
+                repoName.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '-'),
+              ];
+            }
+            
+            console.log(`[TOOL-VET] 데이터베이스에 Tool Validation 취약점이 없어 리포트 파일에서 로드 시도`);
+            console.log(`[TOOL-VET] scan_path: "${scan_path}"`);
+            console.log(`[TOOL-VET] 정규화된 repoName: "${repoName}"`);
+            console.log(`[TOOL-VET] 가능한 repoName 패턴:`, possibleRepoNames);
+            
+            // 리포트 파일 찾기
+            let reportFiles = [];
+            let reportJsonFiles = [];
+            try {
+              reportFiles = await fs.readdir(TOOL_VET_OUTPUT_DIR);
+              reportJsonFiles = reportFiles.filter(f => f.endsWith('-report.json'));
+              console.log(`[TOOL-VET] 발견된 리포트 파일들:`, reportJsonFiles);
+            } catch (dirError) {
+              console.error(`[TOOL-VET] output 디렉토리 읽기 실패: ${TOOL_VET_OUTPUT_DIR}`, dirError.message);
+              throw dirError; // 상위 catch로 전파
+            }
+            
+            // repoName으로 정확히 매칭되는 파일 찾기
+            let reportFile = null;
+            for (const possibleName of possibleRepoNames) {
+              const expectedReportFile = `${possibleName}-report.json`;
+              if (reportFiles.includes(expectedReportFile)) {
+                reportFile = expectedReportFile;
+                console.log(`정확히 매칭된 리포트 파일 발견: ${reportFile}`);
+                break;
+              }
+            }
+            
+            // 정확히 매칭되지 않으면, 리포트 파일 이름에서 repo 이름을 추출하여 비교
+            if (!reportFile && reportJsonFiles.length > 0) {
+              for (const file of reportJsonFiles) {
+                const fileRepoName = file.replace('-report.json', '');
+                // repoName과 파일 이름이 유사한지 확인 (대소문자 무시, 특수문자 무시)
+                const normalizedFileRepoName = fileRepoName.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '');
+                const normalizedTargetRepoName = repoName.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '');
+                
+                if (normalizedFileRepoName === normalizedTargetRepoName) {
+                  reportFile = file;
+                  console.log(`유사도 매칭으로 리포트 파일 발견: ${reportFile}`);
+                  break;
+                }
+              }
+            }
+            
+            // 여전히 매칭되지 않으면, scan_path에 포함된 키워드로 매칭 시도
+            if (!reportFile && reportJsonFiles.length > 0) {
+              const scanPathLower = scan_path.toLowerCase();
+              console.log(`[TOOL-VET] 정확한 매칭 실패, 키워드 매칭 시도: scan_path="${scanPathLower}"`);
+              
+              for (const file of reportJsonFiles) {
+                const fileLower = file.toLowerCase();
+                const fileBaseName = fileLower.replace('-report.json', '');
+                
+                // scan_path에서 마지막 부분만 추출 (GitHub URL인 경우)
+                let scanPathKey = scanPathLower;
+                if (scanPathLower.includes('/')) {
+                  const parts = scanPathLower.split('/');
+                  scanPathKey = parts[parts.length - 1].replace('.git', '');
+                }
+                
+                // scan_path에 포함된 단어가 파일 이름에 포함되어 있는지 확인
+                // 또는 파일 이름이 scan_path에 포함되어 있는지 확인
+                if (fileBaseName.includes(scanPathKey) || scanPathKey.includes(fileBaseName) || 
+                    fileBaseName.includes(scanPathLower) || scanPathLower.includes(fileBaseName)) {
+                  reportFile = file;
+                  console.log(`[TOOL-VET] 키워드 매칭으로 리포트 파일 발견: ${reportFile} (scan_path: ${scanPathLower})`);
+                  break;
+                }
+              }
+            }
+            
+            // 여전히 매칭되지 않으면, 모든 리포트 파일을 확인하고 가장 유사한 것 찾기
+            if (!reportFile && reportJsonFiles.length > 0) {
+              console.log(`[TOOL-VET] 키워드 매칭도 실패, 모든 파일 확인 중...`);
+              const scanPathLower = scan_path.toLowerCase();
+              let scanPathKey = scanPathLower;
+              if (scanPathLower.includes('/')) {
+                const parts = scanPathLower.split('/');
+                scanPathKey = parts[parts.length - 1].replace('.git', '');
+              }
+              
+              // 파일 이름에서 공통 부분 찾기
+              for (const file of reportJsonFiles) {
+                const fileBaseName = file.toLowerCase().replace('-report.json', '');
+                // 단어 단위로 비교
+                const scanWords = scanPathKey.split(/[-_]/).filter(w => w.length > 2);
+                const fileWords = fileBaseName.split(/[-_]/).filter(w => w.length > 2);
+                
+                // 공통 단어가 있으면 매칭
+                const commonWords = scanWords.filter(w => fileWords.includes(w));
+                if (commonWords.length > 0) {
+                  reportFile = file;
+                  console.log(`[TOOL-VET] 공통 단어 매칭으로 리포트 파일 발견: ${reportFile} (공통 단어: ${commonWords.join(', ')})`);
+                  break;
+                }
+              }
+            }
+            
+            // 여전히 매칭되지 않으면 에러 로그만 출력 (잘못된 데이터를 반환하지 않음)
+            if (!reportFile) {
+              console.error(`[TOOL-VET] scan_path "${scan_path}"에 해당하는 리포트 파일을 찾을 수 없습니다.`);
+              console.error(`[TOOL-VET] 사용 가능한 리포트 파일:`, reportJsonFiles);
+              console.error(`[TOOL-VET] 시도한 repoName 패턴:`, possibleRepoNames);
+            }
+            
+            if (reportFile) {
+              const reportPath = path.join(TOOL_VET_OUTPUT_DIR, reportFile);
+              let reportData;
+              try {
+                const reportContent = await fs.readFile(reportPath, 'utf-8');
+                reportData = JSON.parse(reportContent);
+              } catch (readError) {
+                console.error(`[TOOL-VET] 리포트 파일 읽기/파싱 실패: ${reportPath}`, readError.message);
+                throw readError; // 상위 catch로 전파
+              }
+              
+              // MCP 서버 이름 추출
+              let mcpServerName = null;
+              if (reportFile.includes('-report.json')) {
+                mcpServerName = reportFile.replace('-report.json', '');
+              }
+              
+              // 리포트 요약 정보 계산
+              let totalTools = 0;
+              let totalEndpoints = 0;
+              let totalVulns = 0;
+              
+              if (reportData.tools && Array.isArray(reportData.tools)) {
+                totalTools = reportData.tools.length;
+                for (const tool of reportData.tools) {
+                  if (tool.api_endpoints && Array.isArray(tool.api_endpoints)) {
+                    totalEndpoints += tool.api_endpoints.length;
+                    for (const endpoint of tool.api_endpoints) {
+                      if (endpoint.vulnerabilities && Array.isArray(endpoint.vulnerabilities)) {
+                        totalVulns += endpoint.vulnerabilities.length;
+                      }
+                    }
+                  }
+                }
+              }
+              
+              // summary가 있으면 사용
+              if (reportData.summary) {
+                if (reportData.summary.total_tools !== undefined) {
+                  totalTools = reportData.summary.total_tools;
+                }
+                if (reportData.summary.total_vulnerabilities !== undefined) {
+                  totalVulns = reportData.summary.total_vulnerabilities;
+                }
+              }
+              
+              // 리포트 전체 저장
+              const scanId = uuidv4();
+              try {
+                const insertReportStmt = db.prepare(`
+                  INSERT INTO tool_validation_reports (
+                    scan_id, scan_path, mcp_server_name, scan_timestamp,
+                    report_data, total_tools, total_endpoints, total_vulnerabilities
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                `);
+                
+                insertReportStmt.run(
+                  scanId,
+                  scan_path,
+                  mcpServerName,
+                  getKoreaTimeSQLite(),
+                  JSON.stringify(reportData),
+                  totalTools,
+                  totalEndpoints,
+                  totalVulns
+                );
+                
+                console.log(`Tool Validation 리포트 저장 완료: ${mcpServerName || 'unknown'} (tools: ${totalTools}, endpoints: ${totalEndpoints}, vulnerabilities: ${totalVulns})`);
+              } catch (reportInsertError) {
+                console.error('Tool Validation 리포트 저장 오류:', reportInsertError);
+              }
+              
+              // 취약점 데이터 저장
+              try {
+                const deleteStmt = db.prepare('DELETE FROM tool_validation_vulnerabilities WHERE scan_path = ?');
+                deleteStmt.run(scan_path);
+                
+                if (reportData.tools && Array.isArray(reportData.tools)) {
+                  const insertStmt = db.prepare(`
+                    INSERT INTO tool_validation_vulnerabilities (
+                      scan_id, scan_path, scan_timestamp,
+                      tool_name, host, method, path,
+                      category_code, category_name, title, description, evidence, recommendation, raw_data
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  `);
+                  
+                  let savedVulns = 0;
+                  for (const tool of reportData.tools) {
+                    const toolName = tool.name || '';
+                    
+                    if (tool.api_endpoints && Array.isArray(tool.api_endpoints)) {
+                      for (const endpoint of tool.api_endpoints) {
+                        const host = endpoint.host || '';
+                        const method = endpoint.method || '';
+                        const path = endpoint.path || '';
+                        
+                        if (endpoint.vulnerabilities && Array.isArray(endpoint.vulnerabilities)) {
+                          for (const vuln of endpoint.vulnerabilities) {
+                            try {
+                              insertStmt.run(
+                                scanId,
+                                scan_path,
+                                getKoreaTimeSQLite(),
+                                toolName,
+                                host,
+                                method,
+                                path,
+                                vuln.category_code || '',
+                                vuln.category_name || '',
+                                vuln.title || '',
+                                vuln.description || '',
+                                vuln.evidence || '',
+                                vuln.recommendation || '',
+                                JSON.stringify(vuln)
+                              );
+                              savedVulns++;
+                            } catch (insertError) {
+                              console.error('Tool Validation 취약점 저장 오류:', insertError);
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  
+                  console.log(`Tool Validation 취약점 ${savedVulns}개 저장 완료`);
+                  
+                  // 저장 후 다시 조회
+                  vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_path);
+                  console.log(`데이터베이스에서 조회된 취약점 개수: ${vulnerabilities.length}`);
+                }
+              } catch (vulnError) {
+                console.error('Tool Validation 취약점 저장 오류:', vulnError);
+              }
+            } else {
+              console.log(`리포트 파일을 찾을 수 없습니다: ${scan_path}`);
+            }
+          } catch (fileError) {
+            console.error('리포트 파일에서 로드 오류:', fileError);
+          }
+        }
+      } else {
+        // 모든 취약점 조회
+        vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities ORDER BY scan_timestamp DESC, id DESC').all();
+      }
+      
+      // raw_data JSON 파싱
+      const findings = vulnerabilities.map(v => {
+        let rawData = null;
+        if (v.raw_data) {
+          try {
+            rawData = JSON.parse(v.raw_data);
+          } catch (parseError) {
+            console.error(`[TOOL-VET] raw_data JSON 파싱 실패 (id: ${v.id}):`, parseError.message);
+            rawData = null;
+          }
+        }
+        
+        const finding = {
+          id: v.id,
+          scan_id: v.scan_id,
+          scan_path: v.scan_path,
+          scan_timestamp: v.scan_timestamp,
+          tool_name: v.tool_name,
+          host: v.host,
+          method: v.method,
+          path: v.path,
+          category_code: v.category_code,
+          category_name: v.category_name,
+          title: v.title,
+          description: v.description,
+          evidence: v.evidence,
+          recommendation: v.recommendation,
+          raw_data: rawData
+        };
+        return finding;
+      });
+      
+      res.json({
+        success: true,
+        data: findings
+      });
+    } catch (error) {
+      console.error('[TOOL-VET] Tool Validation 취약점 조회 오류:', error);
+      console.error('[TOOL-VET] 에러 스택:', error.stack);
+      console.error('[TOOL-VET] 에러 메시지:', error.message);
+      res.status(500).json({
+        success: false,
+        message: `Tool Validation 취약점 조회 중 오류가 발생했습니다: ${error.message}`
+      });
+    }
+  },
+
+  getToolValidationReports: async (req, res) => {
+    try {
+      const { scan_id, scan_path, mcp_server_name } = req.query;
+      
+      let reports = [];
+      
+      if (scan_id) {
+        // scan_id로 조회
+        reports = db.prepare('SELECT * FROM tool_validation_reports WHERE scan_id = ? ORDER BY scan_timestamp DESC').all(scan_id);
+      } else if (scan_path) {
+        // scan_path로 최신 스캔 결과 조회
+        reports = db.prepare('SELECT * FROM tool_validation_reports WHERE scan_path = ? ORDER BY scan_timestamp DESC LIMIT 1').all(scan_path);
+      } else if (mcp_server_name) {
+        // mcp_server_name으로 최신 리포트 조회
+        reports = db.prepare('SELECT * FROM tool_validation_reports WHERE mcp_server_name = ? ORDER BY scan_timestamp DESC LIMIT 1').all(mcp_server_name);
+      } else {
+        // 모든 리포트 조회
+        reports = db.prepare('SELECT * FROM tool_validation_reports ORDER BY scan_timestamp DESC').all();
+      }
+      
+      // report_data JSON 파싱
+      const parsedReports = reports.map(r => {
+        const report = {
+          id: r.id,
+          scan_id: r.scan_id,
+          scan_path: r.scan_path,
+          mcp_server_name: r.mcp_server_name,
+          scan_timestamp: r.scan_timestamp,
+          total_tools: r.total_tools,
+          total_endpoints: r.total_endpoints,
+          total_vulnerabilities: r.total_vulnerabilities,
+          created_at: r.created_at,
+          report_data: r.report_data ? JSON.parse(r.report_data) : null
+        };
+        return report;
+      });
+      
+      res.json({
+        success: true,
+        data: parsedReports
+      });
+    } catch (error) {
+      console.error('Tool Validation 리포트 조회 오류:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Tool Validation 리포트 조회 중 오류가 발생했습니다.'
+      });
+    }
+  },
+
+  // 기존 TOOL-VET 리포트 파일을 데이터베이스에 수동으로 저장
+  importToolValidationReports: async (req, res) => {
+    try {
+      console.log('기존 TOOL-VET 리포트 파일 임포트 시작...');
+      
+      // TOOL-VET output 디렉토리에서 모든 리포트 파일 찾기
+      const reportFiles = await fs.readdir(TOOL_VET_OUTPUT_DIR);
+      const reportJsonFiles = reportFiles.filter(f => f.endsWith('-report.json') || f === 'report.json' || f.endsWith('report.json'));
+      
+      console.log(`발견된 리포트 파일: ${reportJsonFiles.length}개`);
+      
+      let importedCount = 0;
+      let errorCount = 0;
+      
+      for (const reportFile of reportJsonFiles) {
+        try {
+          const reportPath = path.join(TOOL_VET_OUTPUT_DIR, reportFile);
+          console.log(`리포트 파일 처리 중: ${reportFile}`);
+          
+          const reportData = JSON.parse(await fs.readFile(reportPath, 'utf-8'));
+          
+          // MCP 서버 이름 추출
+          let mcpServerName = null;
+          if (reportFile.includes('-report.json')) {
+            mcpServerName = reportFile.replace('-report.json', '');
+          }
+          
+          // 리포트 요약 정보 계산
+          let totalTools = 0;
+          let totalEndpoints = 0;
+          let totalVulns = 0;
+          
+          if (reportData.tools && Array.isArray(reportData.tools)) {
+            totalTools = reportData.tools.length;
+            for (const tool of reportData.tools) {
+              if (tool.api_endpoints && Array.isArray(tool.api_endpoints)) {
+                totalEndpoints += tool.api_endpoints.length;
+                for (const endpoint of tool.api_endpoints) {
+                  if (endpoint.vulnerabilities && Array.isArray(endpoint.vulnerabilities)) {
+                    totalVulns += endpoint.vulnerabilities.length;
+                  }
+                }
+              }
+            }
+          }
+          
+          // summary가 있으면 사용
+          if (reportData.summary) {
+            if (reportData.summary.total_tools !== undefined) {
+              totalTools = reportData.summary.total_tools;
+            }
+            if (reportData.summary.total_vulnerabilities !== undefined) {
+              totalVulns = reportData.summary.total_vulnerabilities;
+            }
+          }
+          
+          // scan_path 생성 (mcp_server_name 기반)
+          const scanPath = mcpServerName || 'unknown';
+          const scanId = `import-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          
+          // 기존 리포트가 있는지 확인
+          const existingReport = db.prepare('SELECT id FROM tool_validation_reports WHERE mcp_server_name = ? ORDER BY scan_timestamp DESC LIMIT 1').get(mcpServerName);
+          
+          if (existingReport) {
+            console.log(`기존 리포트가 존재합니다: ${mcpServerName} (건너뜀)`);
+            continue;
+          }
+          
+          // 리포트 저장
+          const insertReportStmt = db.prepare(`
+            INSERT INTO tool_validation_reports (
+              scan_id, scan_path, mcp_server_name, scan_timestamp,
+              report_data, total_tools, total_endpoints, total_vulnerabilities
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+          
+          insertReportStmt.run(
+            scanId,
+            scanPath,
+            mcpServerName,
+            getKoreaTimeSQLite(),
+            JSON.stringify(reportData),
+            totalTools,
+            totalEndpoints,
+            totalVulns
+          );
+          
+          console.log(`리포트 저장 완료: ${mcpServerName} (tools: ${totalTools}, endpoints: ${totalEndpoints}, vulnerabilities: ${totalVulns})`);
+          importedCount++;
+        } catch (fileError) {
+          console.error(`리포트 파일 처리 오류 (${reportFile}):`, fileError);
+          errorCount++;
+        }
+      }
+      
+      res.json({
+        success: true,
+        message: `리포트 임포트 완료: ${importedCount}개 성공, ${errorCount}개 실패`,
+        imported: importedCount,
+        errors: errorCount
+      });
+    } catch (error) {
+      console.error('리포트 임포트 오류:', error);
+      res.status(500).json({
+        success: false,
+        message: '리포트 임포트 중 오류가 발생했습니다.'
       });
     }
   }

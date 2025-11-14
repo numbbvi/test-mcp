@@ -25,7 +25,6 @@ import downloadLogsIcon from './assets/tab/download_logs.png';
 import riskAssessmentIcon from './assets/tab/risk_assessment.png';
 import dlpIcon from './assets/tab/dlp.png';
 import settingIcon from './assets/tab/setting.png';
-import bomtoolLogo from './assets/bomtool_blue.png';
 
 function Header() {
   const [user, setUser] = useState(null);
@@ -53,7 +52,6 @@ function Header() {
   return (
     <header className="header">
       <div className="header-logo" onClick={handleLogoClick}>
-        <img src={bomtoolLogo} alt="MCP Safer Logo" />
         <span className="workspace">MCP Safer</span>
       </div>
       {user && (

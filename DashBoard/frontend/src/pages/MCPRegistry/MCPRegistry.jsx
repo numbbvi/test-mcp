@@ -8,6 +8,7 @@ const MCPRegistry = () => {
   const [mcpServers, setMcpServers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0 });
+  const [totalServers, setTotalServers] = useState(0); // 검색 전 전체 서버 개수
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('newest');
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'list'
@@ -18,6 +19,11 @@ const MCPRegistry = () => {
   useEffect(() => {
     fetchServers();
   }, [pagination.page, searchQuery, sortBy]);
+
+  // 검색어가 변경되면 첫 페이지로 리셋
+  useEffect(() => {
+    setPagination(prev => ({ ...prev, page: 1 }));
+  }, [searchQuery]);
 
   const fetchServers = async () => {
     try {
@@ -36,14 +42,17 @@ const MCPRegistry = () => {
         queryParams.append('team', userTeam);
       }
       queryParams.append('status', 'approved'); // MCP Registry는 승인된 서버만 표시
-      queryParams.append('page', pagination.page);
-      queryParams.append('limit', '12');
+      // 클라이언트 측에서 검색 필터링 및 페이징을 처리하기 위해 모든 데이터를 가져옴
+      queryParams.append('limit', '10000');
       
       const res = await fetch(`http://localhost:3001/api/marketplace?${queryParams}`);
       const data = await res.json();
       
       if (data.success) {
         let servers = data.data || [];
+        
+        // 검색 전 전체 서버 개수 저장
+        setTotalServers(servers.length);
         
         // 검색 필터링
         if (searchQuery) {
@@ -77,6 +86,7 @@ const MCPRegistry = () => {
         }));
       } else {
         setMcpServers([]);
+        setTotalServers(0);
         setPagination(prev => ({
           ...prev,
           total: 0,
@@ -126,18 +136,23 @@ const MCPRegistry = () => {
       <h1>MCP Registry</h1>
       {/* 검색 및 필터 섹션 */}
       <div className="mcp-registry-controls">
-        <div className="search-container">
-          <svg className="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Search Servers"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+        <div className="search-container" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+            <svg className="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            <input
+              type="text"
+              className="search-input"
+              placeholder="Search servers"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <span style={{ color: '#666', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>
+            총 {totalServers}개
+          </span>
         </div>
 
         <div className="controls-right">

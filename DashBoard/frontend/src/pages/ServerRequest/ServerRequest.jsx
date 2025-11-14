@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiPostForm } from '../../utils/api';
+import { apiPost } from '../../utils/api';
 import './ServerRequest.css';
 
 const ServerRequest = () => {
@@ -96,7 +96,22 @@ const ServerRequest = () => {
         formData.append('image', form.image);
       }
 
-      const data = await apiPostForm('/marketplace/request', formData);
+      const res = await fetch('http://localhost:3001/api/marketplace/request', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: formData
+      });
+
+      // 응답이 JSON인지 확인
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`서버 오류 (${res.status}): ${text.substring(0, 200)}`);
+      }
+
+      const data = await res.json();
       if (data.success) {
         alert(data.message || '등록 요청이 접수되었습니다.');
         setShowRequestForm(false);
@@ -108,7 +123,7 @@ const ServerRequest = () => {
     } catch (error) {
       console.error('등록 요청 오류:', error);
       // 네트워크 오류인 경우
-      if (error.message.includes('서버에 연결할 수 없습니다') || error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
         alert('서버에 연결할 수 없습니다. 네트워크 연결을 확인해주세요.');
       } else {
         alert(`등록 요청 중 오류가 발생했습니다: ${error.message || error.toString()}`);

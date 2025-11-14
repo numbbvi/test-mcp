@@ -1,7 +1,7 @@
 from pathlib import Path
 
-ARTIFACTS_DIR = Path("artifacts")
-TEMP_DIR = ARTIFACTS_DIR / "temp"
+OUTPUT_DIR = Path("output")
+TEMP_DIR = OUTPUT_DIR / "temp"
 REPOSITORIES_FILE = Path("test/repositories.txt")
 
 GITHUB_PREFIXES = ('https://github.com/', 'http://github.com/')

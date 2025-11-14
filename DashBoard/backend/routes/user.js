@@ -12,6 +12,12 @@ router.get('/me', jwtAuth, userController.getMyInfo);
 // 비밀번호 변경 (현재 로그인한 사용자)
 router.put('/me/password', jwtAuth, userController.changePassword);
 
+// 모든 팀 목록 조회 (/:id보다 먼저 정의해야 함)
+router.get('/teams', userController.getAllTeams);
+
+// 모든 직책 목록 조회 (/:id보다 먼저 정의해야 함)
+router.get('/positions', userController.getAllPositions);
+
 // 사용자 상세 정보 조회
 router.get('/:id', userController.getUserById);
 
@@ -39,11 +45,11 @@ router.delete('/:id/roles/:roleId', userController.removeRole);
 // 사용자 비활성화/활성화
 router.put('/:id/status', userController.toggleUserStatus);
 
-// 모든 팀 목록 조회
-router.get('/teams', userController.getAllTeams);
-
-// 모든 직책 목록 조회
-router.get('/positions', userController.getAllPositions);
+// API 키 관리 (현재 로그인한 사용자)
+router.get('/me/api-keys', jwtAuth, userController.getMyApiKeys);
+router.post('/me/api-keys', jwtAuth, userController.createApiKey);
+router.put('/me/api-keys/:id', jwtAuth, userController.updateApiKey);
+router.delete('/me/api-keys/:id', jwtAuth, userController.deleteApiKey);
 
 module.exports = router;
 

@@ -313,34 +313,6 @@ const dlpController = {
       dlpLogEmitter.removeListener('newLog', onNewLog);
       res.end();
     });
-  },
-
-  // DLP 위반 유형 목록 가져오기
-  getViolationTypes: (req, res) => {
-    try {
-      const db = require('../config/db');
-      const violationTypes = db.prepare(`
-        SELECT DISTINCT violation_type, COUNT(*) as count
-        FROM dlp_violation_logs
-        WHERE violation_type IS NOT NULL AND violation_type != ''
-        GROUP BY violation_type
-        ORDER BY violation_type
-      `).all();
-
-      res.json({
-        success: true,
-        data: violationTypes.map(row => ({
-          type: row.violation_type,
-          count: row.count
-        }))
-      });
-    } catch (error) {
-      console.error('위반 유형 목록 조회 오류:', error);
-      res.status(500).json({
-        success: false,
-        message: '위반 유형 목록 조회 중 오류가 발생했습니다.'
-      });
-    }
   }
 };
 

@@ -19,6 +19,9 @@ router.get('/requests', jwtAuth, marketplaceController.getMcpRequests);
 // 등록 요청 승인/거부 (관리자용) - :id 라우트보다 먼저 정의
 router.put('/requests/:id/review', marketplaceController.reviewRequest);
 
+// 등록 요청 삭제 (관리자 또는 요청자 본인) - :id 라우트보다 먼저 정의
+router.delete('/requests/:id', jwtAuth, marketplaceController.deleteMcpRequest);
+
 // MCP 서버 삭제 (관리자용) - :id 라우트보다 먼저 정의
 router.delete('/server/:id', marketplaceController.deleteMcpServer);
 

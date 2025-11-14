@@ -1,7 +1,7 @@
 .server-request-section {
-  padding: 32px;
+  padding: 24px;
   background: #f5f6fb;
-  min-height: 100vh;
+  min-height: 100%;
 }
 
 .server-request-header {

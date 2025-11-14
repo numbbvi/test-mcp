@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Pagination from '../../components/Pagination';
 import './RequestBoard.css';
@@ -11,23 +11,60 @@ const RequestBoard = () => {
   const [filter, setFilter] = useState('all'); // all, pending, approved, rejected
   const [reviewForm, setReviewForm] = useState({ status: '', comment: '', server_description: '', allowed_teams: [], tools: [] });
   const [user, setUser] = useState(null);
-  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0 });
+  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0, limit: 20 });
   const [scannedTools, setScannedTools] = useState([]);
   const [scanningTools, setScanningTools] = useState(false);
   const [showScanModal, setShowScanModal] = useState(false);
   const [scanResult, setScanResult] = useState(null);
   const [analyzingRisk, setAnalyzingRisk] = useState(false);
-  const [analysisProgress, setAnalysisProgress] = useState({ bomtori: 0, scanner: 0 });
+  const [analysisProgress, setAnalysisProgress] = useState({ bomtori: 0, scanner: 0, toolVet: 0 });
   const [riskAnalysisResult, setRiskAnalysisResult] = useState(null);
+  // localStorage에서 저장된 결과 불러오기
+  const [riskAnalysisResults, setRiskAnalysisResults] = useState(() => {
+    try {
+      const saved = localStorage.getItem('riskAnalysisResults');
+      return saved ? JSON.parse(saved) : {};
+    } catch (error) {
+      console.error('localStorage에서 riskAnalysisResults 불러오기 실패:', error);
+      return {};
+    }
+  }); // request id별로 결과 저장
   const [analysisCompleted, setAnalysisCompleted] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [detailPanelWidth, setDetailPanelWidth] = useState(600);
-  const [isResizing, setIsResizing] = useState(false);
-  const detailPanelRef = useRef(null);
   const [currentScanId, setCurrentScanId] = useState(null);
+  const [teams, setTeams] = useState([]); // DB에서 가져온 팀 목록
+
+  // selectedRequest가 변경될 때 저장된 결과 복원
+  useEffect(() => {
+    if (selectedRequest) {
+      const savedResult = riskAnalysisResults[selectedRequest.id];
+      if (savedResult) {
+        console.log('useEffect - 저장된 결과 복원:', savedResult, 'for request:', selectedRequest.id);
+        setRiskAnalysisResult(savedResult);
+        setCurrentScanId(savedResult.scanId);
+        setAnalysisCompleted(true);
+        setAnalyzingRisk(false);
+        setAnalysisProgress({ bomtori: 100, scanner: 100, toolVet: 100 });
+        // selectedRequest.scanned를 1로 업데이트 (결과가 있으므로)
+        if (selectedRequest.scanned !== 1 && selectedRequest.scanned !== '1' && selectedRequest.scanned !== true) {
+          setSelectedRequest(prev => prev ? { ...prev, scanned: 1 } : prev);
+        }
+      }
+    }
+    // selectedRequest가 null이면 riskAnalysisResult는 유지 (다시 열 때 복원하기 위해)
+  }, [selectedRequest?.id]); // riskAnalysisResults는 dependency에 포함하지 않음 (무한 루프 방지)
+
+  // riskAnalysisResults가 변경될 때마다 localStorage에 저장
+  useEffect(() => {
+    try {
+      localStorage.setItem('riskAnalysisResults', JSON.stringify(riskAnalysisResults));
+    } catch (error) {
+      console.error('localStorage에 riskAnalysisResults 저장 실패:', error);
+    }
+  }, [riskAnalysisResults]);
 
   useEffect(() => {
     // 로그인한 사용자 정보 가져오기
@@ -35,6 +72,36 @@ const RequestBoard = () => {
     if (savedUser) {
       setUser(JSON.parse(savedUser));
     }
+  }, []);
+
+  // 팀 목록 가져오기
+  useEffect(() => {
+    const fetchTeams = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch('http://localhost:3001/api/users/teams', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        
+        const data = await res.json();
+        if (data.success) {
+          setTeams(data.data || []);
+        } else {
+          console.error('팀 목록 조회 실패:', data.message);
+          setTeams([]);
+        }
+      } catch (error) {
+        console.error('팀 목록 로드 실패:', error);
+        setTeams([]);
+      }
+    };
+    fetchTeams();
   }, []);
 
   useEffect(() => {
@@ -61,38 +128,6 @@ const RequestBoard = () => {
     };
   }, [selectedRequest]);
 
-  // Resize 기능
-  useEffect(() => {
-    if (!isResizing) return;
-
-    const handleMouseMove = (e) => {
-      if (!isResizing) return;
-      const newWidth = window.innerWidth - e.clientX;
-      const minWidth = 400;
-      const maxWidth = window.innerWidth * 0.9;
-      if (newWidth >= minWidth && newWidth <= maxWidth) {
-        setDetailPanelWidth(newWidth);
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizing]);
-
-  const handleResizeStart = (e) => {
-    e.preventDefault();
-    setIsResizing(true);
-  };
-
   const fetchRequests = async () => {
     try {
       setLoading(true);
@@ -102,7 +137,7 @@ const RequestBoard = () => {
         queryParams.append('status', filter);
       }
       queryParams.append('page', pagination.page);
-      queryParams.append('limit', '20');
+      // limit은 백엔드 기본값 사용 (기본 20개)
       
       // JWT 토큰 가져오기
       const token = localStorage.getItem('token');
@@ -118,43 +153,153 @@ const RequestBoard = () => {
       });
       const data = await res.json();
       
+      let updatedRequests = [];
       if (data.success) {
-        setRequests(data.data || []);
+        updatedRequests = data.data || [];
+        setRequests(updatedRequests);
         setPagination(prev => ({
           ...prev,
           total: data.pagination?.total || 0,
-          totalPages: data.pagination?.totalPages || 1
+          totalPages: data.pagination?.totalPages || 1,
+          limit: data.pagination?.limit || prev.limit || 20
+        }));
+        
+        // selectedRequest가 있으면 최신 정보로 업데이트
+        if (selectedRequest) {
+          const latestRequest = updatedRequests.find(r => r.id === selectedRequest.id);
+          if (latestRequest) {
+            setSelectedRequest(latestRequest);
+          }
+        }
+      } else {
+        setRequests([]);
+        setPagination(prev => ({
+          ...prev,
+          total: 0,
+          totalPages: 1,
+          limit: prev.limit || 20
+        }));
+      }
+      
+      return updatedRequests;
+    } catch (error) {
+      console.error('등록 요청 목록 로드 실패:', error);
+      setRequests([]);
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 로딩 상태 없이 요청 목록만 가져오는 함수 (상세보기에서 사용)
+  const fetchRequestsWithoutLoading = async () => {
+    try {
+      const queryParams = new URLSearchParams();
+      if (filter !== 'all') {
+        queryParams.append('status', filter);
+      }
+      queryParams.append('page', pagination.page);
+      // limit은 백엔드 기본값 사용 (기본 20개)
+      // 필요시 queryParams.append('limit', '20'); 로 명시적으로 설정 가능
+      
+      // JWT 토큰 가져오기
+      const token = localStorage.getItem('token');
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      
+      const res = await fetch(`http://localhost:3001/api/marketplace/requests?${queryParams}`, {
+        headers
+      });
+      const data = await res.json();
+      
+      let updatedRequests = [];
+      if (data.success) {
+        updatedRequests = data.data || [];
+        setRequests(updatedRequests);
+        setPagination(prev => ({
+          ...prev,
+          total: data.pagination?.total || 0,
+          totalPages: data.pagination?.totalPages || 1,
+          limit: data.pagination?.limit || prev.limit || 20
         }));
       } else {
         setRequests([]);
         setPagination(prev => ({
           ...prev,
           total: 0,
-          totalPages: 1
+          totalPages: 1,
+          limit: prev.limit || 20
         }));
       }
       
+      return updatedRequests;
     } catch (error) {
       console.error('등록 요청 목록 로드 실패:', error);
       setRequests([]);
-    } finally {
-      setLoading(false);
+      return [];
     }
   };
 
   const handleViewDetail = async (request) => {
-    setSelectedRequest(request);
-    setReviewForm({ status: '', comment: '', server_description: request.description || '', allowed_teams: [], tools: [] });
+    // 최신 정보를 가져오기 위해 먼저 요청 목록을 새로고침
+    // (scanned 상태가 업데이트되었을 수 있음)
+    // 단, 로딩 상태는 설정하지 않음 (상세보기 패널이 가려지지 않도록)
+    const updatedRequests = await fetchRequestsWithoutLoading();
+    
+    // 업데이트된 requests 배열에서 최신 정보 찾기
+    let latestRequest = request;
+    const latestFromList = updatedRequests.find(r => r.id === request.id);
+    if (latestFromList) {
+      latestRequest = latestFromList;
+    }
+    
+    // selectedRequest가 이미 있고 scanned가 1이면 그것을 사용 (분석 완료 후 상태 유지)
+    if (selectedRequest && selectedRequest.id === request.id && (selectedRequest.scanned === 1 || selectedRequest.scanned === '1' || selectedRequest.scanned === true)) {
+      latestRequest = selectedRequest;
+    }
+    
+    setSelectedRequest(latestRequest);
+    setReviewForm({ status: '', comment: '', server_description: latestRequest.description || '', allowed_teams: [], tools: [] });
     setScannedTools([]);
     setScanResult(null);
-    setAnalyzingRisk(false);
-    setAnalysisProgress(0);
-    setRiskAnalysisResult(null);
-    setAnalysisCompleted(false);
-
-    // scanned가 1이면 분석 결과를 불러옴
-    if (request.scanned === 1) {
-      const scanPath = request.github_link || request.file_path;
+    
+    // 이전에 저장된 결과가 있으면 먼저 복원
+    const savedResult = riskAnalysisResults[request.id];
+    if (savedResult) {
+      console.log('handleViewDetail - 저장된 결과 복원:', savedResult, 'for request:', request.id);
+      // latestRequest의 scanned 상태를 1로 업데이트 (결과가 있으므로)
+      if (latestRequest.scanned !== 1 && latestRequest.scanned !== '1' && latestRequest.scanned !== true) {
+        latestRequest = { ...latestRequest, scanned: 1 };
+      }
+      setSelectedRequest(latestRequest);
+      setRiskAnalysisResult(savedResult);
+      setCurrentScanId(savedResult.scanId);
+      setAnalysisCompleted(true);
+      setAnalyzingRisk(false);
+      setAnalysisProgress({ bomtori: 100, scanner: 100, toolVet: 100 });
+      // 저장된 결과가 있으면 바로 반환 (다시 불러올 필요 없음)
+      return;
+    }
+    
+    // scanned가 1이거나 저장된 결과가 있으면 분석 결과를 불러옴 (상태 초기화하지 않음)
+    // 중요: scanned === 1일 때는 riskAnalysisResult를 null로 초기화하지 않음
+    // scanned는 숫자 1 또는 문자열 "1"일 수 있음
+    const isScanned = latestRequest.scanned === 1 || latestRequest.scanned === '1' || latestRequest.scanned === true;
+    const hasExistingResult = riskAnalysisResult && (riskAnalysisResult.scanId || riskAnalysisResult.ossVulnerabilities !== undefined);
+    console.log('handleViewDetail - scanned 값:', latestRequest.scanned, 'isScanned:', isScanned, 'hasExistingResult:', hasExistingResult);
+    
+    // scanned가 1이거나 기존 결과가 있으면 결과를 불러옴
+    if (isScanned || hasExistingResult) {
+      // 분석이 완료된 상태이므로 진행 중 상태는 false로 설정
+      setAnalyzingRisk(false);
+      setAnalysisProgress({ bomtori: 100, scanner: 100, toolVet: 100 });
+      
+      const scanPath = latestRequest.github_link || latestRequest.file_path;
+      console.log('handleViewDetail - scanPath:', scanPath);
       if (scanPath) {
         try {
           const token = localStorage.getItem('token');
@@ -203,27 +348,96 @@ const RequestBoard = () => {
                 }
               } catch (ossError) {
                 console.error('OSS 취약점 조회 실패:', ossError);
+              }
+            
+          // Tool 취약점 조회
+          let toolVulns = 0;
+          try {
+            let toolRes;
+            if (scanId) {
+              toolRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`
+                }
+              });
+            } else {
+              toolRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`
+                }
+              });
             }
+            const toolData = await toolRes.json();
+            if (toolData.success && toolData.data) {
+              toolVulns = toolData.data.length || 0;
+            }
+          } catch (toolError) {
+            console.error('Tool 취약점 조회 실패:', toolError);
+          }
             
           // 스캔 결과 설정
-            setRiskAnalysisResult({
-              ossVulnerabilities: ossVulns,
-              codeVulnerabilities: codeVulns,
-              toolVulnerabilities: 0,
-              scanId: scanId
-            });
+          const result = {
+            ossVulnerabilities: ossVulns,
+            codeVulnerabilities: codeVulns,
+            toolVulnerabilities: toolVulns,
+            scanId: scanId
+          };
+          console.log('handleViewDetail - 결과 설정:', result, 'request.id:', latestRequest.id);
+          setRiskAnalysisResult(result);
+          // request id별로 결과 저장 (패널을 닫고 다시 열어도 유지)
+          setRiskAnalysisResults(prev => ({
+            ...prev,
+            [latestRequest.id]: result
+          }));
           setCurrentScanId(scanId); // scanId를 별도 state에 저장
-            setAnalysisCompleted(true);
+          setAnalysisCompleted(true);
         } catch (error) {
           console.error('스캔 결과 조회 실패:', error);
           // 조회 실패 시에도 스캔 완료로 표시 (scanned === 1이므로)
-          setRiskAnalysisResult({
+          const errorResult = {
             ossVulnerabilities: 0,
             codeVulnerabilities: 0,
             toolVulnerabilities: 0,
             scanId: null
-          });
+          };
+          setRiskAnalysisResult(errorResult);
+          setRiskAnalysisResults(prev => ({
+            ...prev,
+            [latestRequest.id]: errorResult
+          }));
           setAnalysisCompleted(true);
+        }
+      } else {
+        // scanPath가 없어도 scanned === 1이면 기본값으로 결과 설정
+        const defaultResult = {
+          ossVulnerabilities: 0,
+          codeVulnerabilities: 0,
+          toolVulnerabilities: 0,
+          scanId: null
+        };
+        setRiskAnalysisResult(defaultResult);
+        setRiskAnalysisResults(prev => ({
+          ...prev,
+          [latestRequest.id]: defaultResult
+        }));
+        setAnalysisCompleted(true);
+      }
+    } else {
+      // scanned가 1이 아니지만 riskAnalysisResult가 있으면 유지 (분석 완료 후 상태)
+      if (riskAnalysisResult && (riskAnalysisResult.scanId || riskAnalysisResult.ossVulnerabilities !== undefined)) {
+        // 결과가 있으면 유지하고 분석 완료 상태로 설정
+        setAnalyzingRisk(false);
+        setAnalysisProgress({ bomtori: 100, scanner: 100, toolVet: 100 });
+        setAnalysisCompleted(true);
+      } else {
+        // scanned가 1이 아니고 결과도 없으면 상태 초기화
+        // 단, 저장된 결과가 있으면 초기화하지 않음
+        const savedResult = riskAnalysisResults[latestRequest.id];
+        if (!savedResult) {
+          setAnalyzingRisk(false);
+          setAnalysisProgress({ bomtori: 0, scanner: 0, toolVet: 0 });
+          setRiskAnalysisResult(null);
+          setAnalysisCompleted(false);
         }
       }
     }
@@ -236,7 +450,7 @@ const RequestBoard = () => {
     }
 
     setAnalyzingRisk(true);
-    setAnalysisProgress({ bomtori: 0, scanner: 0 });
+    setAnalysisProgress({ bomtori: 0, scanner: 0, toolVet: 0 });
     setRiskAnalysisResult(null);
     setAnalysisCompleted(false);
     setAnalysisError(null);
@@ -263,7 +477,7 @@ const RequestBoard = () => {
       if (!data.success || !data.scan_id) {
         setAnalysisError(data.message || '스캔 시작 실패');
         setAnalyzingRisk(false);
-        setAnalysisProgress({ bomtori: 0, scanner: 0 });
+        setAnalysisProgress({ bomtori: 0, scanner: 0, toolVet: 0 });
         return;
       }
       
@@ -287,7 +501,8 @@ const RequestBoard = () => {
                 // 진행률 업데이트 (오류가 있어도 진행률은 업데이트)
                 setAnalysisProgress({
                   bomtori: progress.bomtori !== null ? progress.bomtori : 0,
-                  scanner: progress.scanner || 0
+                  scanner: progress.scanner || 0,
+                  toolVet: progress.toolVet !== null ? progress.toolVet : 0
                 });
                 
                 // 개별 스캐너 오류 확인
@@ -297,6 +512,9 @@ const RequestBoard = () => {
                 }
                 if (progress.scannerError) {
                   errorMessages.push(progress.scannerError);
+                }
+                if (progress.toolVetError) {
+                  errorMessages.push(progress.toolVetError);
                 }
                 
                 // 오류 발생 확인 (status가 'failed'이거나 개별 오류가 있으면)
@@ -310,6 +528,15 @@ const RequestBoard = () => {
                 
                 // 둘 다 완료되었는지 확인
                 if (progress.status === 'completed') {
+                  // 즉시 3개 모두 100%로 설정
+                  setAnalysisProgress({
+                    bomtori: 100,
+                    scanner: 100,
+                    toolVet: 100
+                  });
+                  
+                  // 3초 후에 결과 표시
+                  setTimeout(async () => {
                   // 완료 후 취약점 개수 조회
                   try {
                     const vulnRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}`, {
@@ -322,6 +549,7 @@ const RequestBoard = () => {
                     const codeVulns = vulnData.success ? (vulnData.data?.length || 0) : 0;
                     
                     // OSS 취약점 개수 조회
+                      let ossVulns = 0;
                     try {
                       const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
                         headers: {
@@ -329,51 +557,75 @@ const RequestBoard = () => {
                         }
                       });
                       const ossData = await ossRes.json();
-                      const ossVulns = ossData.success ? (ossData.data?.length || 0) : 0;
+                        ossVulns = ossData.success ? (ossData.data?.length || 0) : 0;
+                      } catch (error) {
+                        console.error('OSS 취약점 개수 조회 실패:', error);
+                      }
                       
-                      setRiskAnalysisResult({
+                      // Tool 취약점 개수 조회
+                      let toolVulns = 0;
+                      try {
+                        const toolRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
+                          headers: {
+                            'Authorization': `Bearer ${token}`
+                          }
+                        });
+                        const toolData = await toolRes.json();
+                        toolVulns = toolData.success ? (toolData.data?.length || 0) : 0;
+                    } catch (error) {
+                        console.error('Tool 취약점 개수 조회 실패:', error);
+                      }
+                      
+                      const result = {
                         ossVulnerabilities: ossVulns,
                         codeVulnerabilities: codeVulns,
-                        toolVulnerabilities: 0,
+                        toolVulnerabilities: toolVulns,
                         scanId: scanId
-                      });
+                      };
+                      setRiskAnalysisResult(result);
+                      // request id별로 결과 저장 (패널을 닫고 다시 열어도 유지)
+                      if (selectedRequest) {
+                        setRiskAnalysisResults(prev => ({
+                          ...prev,
+                          [selectedRequest.id]: result
+                        }));
+                      }
                       setCurrentScanId(scanId); // scanId를 별도 state에 저장
-                    } catch (error) {
-                      console.error('OSS 취약점 개수 조회 실패:', error);
-                      setRiskAnalysisResult({
-                        ossVulnerabilities: 0,
-                        codeVulnerabilities: codeVulns,
-                        toolVulnerabilities: 0,
-                        scanId: scanId
-                      });
-                      setCurrentScanId(scanId); // scanId를 별도 state에 저장
-                    }
                     
                     setAnalysisCompleted(true);
                     setAnalyzingRisk(false);
                     
-                    // 스캔 완료 후 요청 목록을 다시 불러와서 scanned 필드 업데이트
-                    fetchRequests();
-                    // 현재 선택된 요청도 업데이트하고 상세 정보 다시 로드
+                      // 현재 선택된 요청을 먼저 업데이트 (scanned: 1로 설정)
                     if (selectedRequest) {
                       const updatedRequest = { ...selectedRequest, scanned: 1 };
                       setSelectedRequest(updatedRequest);
-                      // 상세 정보 다시 로드하여 최신 취약점 개수 반영
-                      handleViewDetail(updatedRequest);
                     }
-                    break;
+                      
+                      // 스캔 완료 후 요청 목록을 다시 불러와서 scanned 필드 업데이트
+                      // fetchRequests 내부에서 selectedRequest도 자동으로 업데이트됨
+                      await fetchRequests();
                   } catch (error) {
                     console.error('취약점 개수 조회 실패:', error);
-                    setRiskAnalysisResult({
+                      // 조회 실패 시에도 기본값으로 결과 설정
+                    const errorResult = {
                       ossVulnerabilities: 0,
                       codeVulnerabilities: 0,
                       toolVulnerabilities: 0,
                       scanId: scanId
-                    });
+                    };
+                    setRiskAnalysisResult(errorResult);
+                    if (selectedRequest) {
+                      setRiskAnalysisResults(prev => ({
+                        ...prev,
+                        [selectedRequest.id]: errorResult
+                      }));
+                    }
                     setAnalysisCompleted(true);
                     setAnalyzingRisk(false);
-                    break;
                   }
+                  }, 3000); // 3초 대기
+                  
+                    break;
                 }
               }
             }
@@ -391,7 +643,7 @@ const RequestBoard = () => {
       console.error('분석 오류:', error);
       setAnalysisError('분석 중 오류가 발생했습니다: ' + (error.message || '알 수 없는 오류'));
       setAnalyzingRisk(false);
-      setAnalysisProgress({ bomtori: 0, scanner: 0 });
+      setAnalysisProgress({ bomtori: 0, scanner: 0, toolVet: 0 });
     }
   };
 
@@ -520,17 +772,21 @@ const RequestBoard = () => {
     setScannedTools([]);
     setScanResult(null);
     setShowScanModal(false);
-    setCurrentScanId(null); // scanId 초기화
+    // riskAnalysisResult와 currentScanId는 유지 (분석 완료 후 상태 유지)
+    // setCurrentScanId(null); // scanId 초기화하지 않음
+    // setRiskAnalysisResult(null); // 결과도 초기화하지 않음
   };
 
-  const handleReview = async () => {
-    if (!reviewForm.status) {
+  const handleReview = async (statusOverride = null) => {
+    const status = statusOverride || reviewForm.status;
+    
+    if (!status) {
       alert('승인 또는 거부를 선택해주세요.');
       return;
     }
 
     // 승인 시 서버 설명 필수 확인
-    if (reviewForm.status === 'approved' && !reviewForm.server_description.trim()) {
+    if (status === 'approved' && !reviewForm.server_description.trim()) {
       alert('승인 시 서버 설명은 필수입니다.');
       return;
     }
@@ -540,7 +796,7 @@ const RequestBoard = () => {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          status: reviewForm.status,
+          status: status,
           review_comment: reviewForm.comment || null,
           server_description: reviewForm.server_description || null,
           allowed_teams: reviewForm.allowed_teams.length > 0 ? reviewForm.allowed_teams : null,
@@ -804,7 +1060,13 @@ const RequestBoard = () => {
           <Pagination
             currentPage={pagination.page}
             totalPages={pagination.totalPages}
-            onPageChange={(page) => setPagination(prev => ({ ...prev, page }))}
+            onPageChange={(page) => {
+              setPagination(prev => ({ ...prev, page }));
+              // 페이지 변경 시 스크롤을 맨 위로 이동
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            totalItems={pagination.total}
+            itemsPerPage={pagination.limit || 20}
           />
         </section>
       </div>
@@ -868,8 +1130,22 @@ const RequestBoard = () => {
                 <div className="detail-section">
                   <h3>위험도 분석</h3>
                   {/* 스캔 여부에 따라 버튼 표시 조건 변경 */}
-                  {/* scanned가 0이거나 null이면 Run Analysis 버튼만 표시 */}
-                  {(!selectedRequest.scanned || selectedRequest.scanned === 0) && (
+                  {/* scanned가 0이거나 null이고, 저장된 결과도 없으면 Run Analysis 버튼만 표시 */}
+                  {(() => {
+                    const isNotScanned = !selectedRequest.scanned || selectedRequest.scanned === 0 || selectedRequest.scanned === '0' || selectedRequest.scanned === false;
+                    // 저장된 결과 확인 (가장 확실한 방법)
+                    const savedResult = riskAnalysisResults[selectedRequest.id];
+                    // 현재 결과도 확인 (렌더링 중에 복원되었을 수 있음)
+                    const currentResult = riskAnalysisResult;
+                    const hasAnyResult = savedResult || (currentResult && (currentResult.scanId || currentResult.ossVulnerabilities !== undefined));
+                    
+                    // scanned가 0이고 결과도 없으면 버튼 표시
+                    const shouldShowButton = isNotScanned && !hasAnyResult;
+                    
+                    console.log('Run Analysis 버튼 조건 - isNotScanned:', isNotScanned, 'savedResult:', savedResult, 'currentResult:', currentResult, 'hasAnyResult:', hasAnyResult, 'shouldShowButton:', shouldShowButton);
+                    
+                    return shouldShowButton;
+                  })() && (
                     <div style={{ marginBottom: '16px' }}>
                       {analysisError ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -948,18 +1224,49 @@ const RequestBoard = () => {
                               }}></div>
                             </div>
                           </div>
+                          {selectedRequest.github_link && selectedRequest.github_link.includes('github.com') && (
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '0.85rem', color: '#666' }}>
+                                <span>Tool Vetting</span>
+                                <span>{typeof analysisProgress === 'object' ? `${analysisProgress.toolVet || 0}%` : '0%'}</span>
+                              </div>
+                              <div style={{
+                                width: '100%',
+                                height: '8px',
+                                backgroundColor: '#e0e0e0',
+                                borderRadius: '4px',
+                                overflow: 'hidden'
+                              }}>
+                                <div style={{
+                                  width: `${typeof analysisProgress === 'object' ? (analysisProgress.toolVet || 0) : 0}%`,
+                                  height: '100%',
+                                  backgroundColor: '#7c3aed',
+                                  transition: 'width 0.3s ease'
+                                }}></div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                         </>
                       )}
                     </div>
                   )}
-                  {/* scanned가 1이면 분석 결과와 승인/거절 버튼 표시 */}
-                  {selectedRequest.scanned === 1 && (
+                  {/* scanned가 1이거나 riskAnalysisResult가 있으면 분석 결과와 승인/거절 버튼 표시 */}
+                  {(() => {
+                    const isScanned = selectedRequest.scanned === 1 || selectedRequest.scanned === '1' || selectedRequest.scanned === true;
+                    // 저장된 결과 또는 현재 결과 확인
+                    const savedResult = riskAnalysisResults[selectedRequest.id];
+                    const currentResult = riskAnalysisResult;
+                    const hasResult = savedResult || (currentResult && (currentResult.scanId || currentResult.ossVulnerabilities !== undefined));
+                    const shouldShow = isScanned || hasResult;
+                    
+                    console.log('렌더링 - selectedRequest.scanned:', selectedRequest.scanned, 'isScanned:', isScanned, 'hasResult:', hasResult, 'shouldShow:', shouldShow, 'savedResult:', savedResult, 'currentResult:', currentResult, 'riskAnalysisResults keys:', Object.keys(riskAnalysisResults));
+                    return shouldShow;
+                  })() && (
                     <div>
-                      {riskAnalysisResult && (
-                        <>
-                          <div style={{
+                      {/* 취약점 정보 표시 - riskAnalysisResult가 없어도 기본값(0) 표시 */}
+                      <div style={{
                             display: 'grid',
                             gridTemplateColumns: 'repeat(3, 1fr)',
                             gap: '16px',
@@ -973,7 +1280,11 @@ const RequestBoard = () => {
                             }}>
                               <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '8px' }}>OSS 취약점</div>
                               <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#333' }}>
-                                {riskAnalysisResult.ossVulnerabilities || 0}
+                            {(() => {
+                              const savedResult = riskAnalysisResults[selectedRequest.id];
+                              const result = riskAnalysisResult || savedResult;
+                              return result?.ossVulnerabilities ?? 0;
+                            })()}
                               </div>
                             </div>
                             <div style={{
@@ -984,7 +1295,11 @@ const RequestBoard = () => {
                             }}>
                               <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '8px' }}>Code 취약점</div>
                               <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#333' }}>
-                                {riskAnalysisResult.codeVulnerabilities || 0}
+                            {(() => {
+                              const savedResult = riskAnalysisResults[selectedRequest.id];
+                              const result = riskAnalysisResult || savedResult;
+                              return result?.codeVulnerabilities ?? 0;
+                            })()}
                               </div>
                             </div>
                             <div style={{
@@ -995,12 +1310,14 @@ const RequestBoard = () => {
                             }}>
                               <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '8px' }}>Tool 취약점</div>
                               <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#333' }}>
-                                {riskAnalysisResult.toolVulnerabilities || 0}
+                            {(() => {
+                              const savedResult = riskAnalysisResults[selectedRequest.id];
+                              const result = riskAnalysisResult || savedResult;
+                              return result?.toolVulnerabilities ?? 0;
+                            })()}
                               </div>
                             </div>
                           </div>
-                        </>
-                      )}
                       {/* scanned === 1이면 항상 상세보기 버튼 표시 */}
                             <button
                               onClick={handleViewRiskDetail}
@@ -1040,70 +1357,110 @@ const RequestBoard = () => {
                             </label>
                           )}
                           <label style={{ marginTop: '16px' }}>
-                            <strong>접근 가능 팀 선택 (선택)</strong>
+                            <strong>접근 가능 팀 선택</strong>
                             <div className="team-checkboxes" style={{ marginTop: '8px' }}>
-                              {['Developer', 'Security', 'Management', 'HR'].map(team => (
-                                <label key={team} style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={reviewForm.allowed_teams.includes(team)}
-                                    onChange={(e) => {
-                                      let newAllowedTeams;
-                                      if (e.target.checked) {
-                                        newAllowedTeams = [...reviewForm.allowed_teams, team];
-                                      } else {
-                                        newAllowedTeams = reviewForm.allowed_teams.filter(t => t !== team);
-                                      }
-                                      
-                                      // 접근 가능 팀 선택 시 모든 Tool의 allowed_teams에 자동으로 추가/제거
-                                      const updatedTools = reviewForm.tools.map(tool => {
+                              {/* 전체 팀 체크박스 */}
+                              <label style={{ display: 'flex', alignItems: 'center', marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px solid #e0e0e0' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={teams.length > 0 && reviewForm.allowed_teams.length === teams.length}
+                                  onChange={(e) => {
+                                    let newAllowedTeams;
+                                    if (e.target.checked) {
+                                      // 전체 팀 선택
+                                      newAllowedTeams = [...teams];
+                                    } else {
+                                      // 전체 팀 해제
+                                      newAllowedTeams = [];
+                                    }
+                                    
+                                    // 접근 가능 팀 선택 시 모든 Tool의 allowed_teams에 자동으로 추가/제거
+                                    const updatedTools = reviewForm.tools.map(tool => ({
+                                      ...tool,
+                                      allowed_teams: e.target.checked ? [...teams] : []
+                                    }));
+                                    
+                                    // scannedTools도 동기화 (UI 표시용)
+                                    const updatedScannedTools = scannedTools.map(tool => ({
+                                      ...tool,
+                                      allowed_teams: e.target.checked ? [...teams] : []
+                                    }));
+                                    
+                                    setReviewForm({
+                                      ...reviewForm,
+                                      allowed_teams: newAllowedTeams,
+                                      tools: updatedTools
+                                    });
+                                    setScannedTools(updatedScannedTools);
+                                  }}
+                                  style={{ marginRight: '8px' }}
+                                />
+                                <span style={{ fontWeight: '600' }}>전체 팀</span>
+                              </label>
+                              {/* 개별 팀 체크박스 */}
+                              {teams.length > 0 ? (
+                                teams.map(team => (
+                                  <label key={team} style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={reviewForm.allowed_teams.includes(team)}
+                                      onChange={(e) => {
+                                        let newAllowedTeams;
                                         if (e.target.checked) {
-                                          // 체크 시: 해당 팀이 없으면 추가
-                                          if (!tool.allowed_teams.includes(team)) {
-                                            return { ...tool, allowed_teams: [...tool.allowed_teams, team] };
-                                          }
+                                          newAllowedTeams = [...reviewForm.allowed_teams, team];
                                         } else {
-                                          // 체크 해제 시: Tool의 allowed_teams에서도 제거
-                                          if (tool.allowed_teams.includes(team)) {
-                                            return { ...tool, allowed_teams: tool.allowed_teams.filter(t => t !== team) };
-                                          }
+                                          newAllowedTeams = reviewForm.allowed_teams.filter(t => t !== team);
                                         }
-                                        return tool;
-                                      });
-                                      
-                                      // scannedTools도 동기화 (UI 표시용)
-                                      const updatedScannedTools = scannedTools.map(tool => {
-                                        if (e.target.checked) {
-                                          if (!tool.allowed_teams.includes(team)) {
-                                            return { ...tool, allowed_teams: [...tool.allowed_teams, team] };
+                                        
+                                        // 접근 가능 팀 선택 시 모든 Tool의 allowed_teams에 자동으로 추가/제거
+                                        const updatedTools = reviewForm.tools.map(tool => {
+                                          if (e.target.checked) {
+                                            // 체크 시: 해당 팀이 없으면 추가
+                                            if (!tool.allowed_teams.includes(team)) {
+                                              return { ...tool, allowed_teams: [...tool.allowed_teams, team] };
+                                            }
+                                          } else {
+                                            // 체크 해제 시: Tool의 allowed_teams에서도 제거
+                                            if (tool.allowed_teams.includes(team)) {
+                                              return { ...tool, allowed_teams: tool.allowed_teams.filter(t => t !== team) };
+                                            }
                                           }
-                                        } else {
-                                          if (tool.allowed_teams.includes(team)) {
-                                            return { ...tool, allowed_teams: tool.allowed_teams.filter(t => t !== team) };
+                                          return tool;
+                                        });
+                                        
+                                        // scannedTools도 동기화 (UI 표시용)
+                                        const updatedScannedTools = scannedTools.map(tool => {
+                                          if (e.target.checked) {
+                                            if (!tool.allowed_teams.includes(team)) {
+                                              return { ...tool, allowed_teams: [...tool.allowed_teams, team] };
+                                            }
+                                          } else {
+                                            if (tool.allowed_teams.includes(team)) {
+                                              return { ...tool, allowed_teams: tool.allowed_teams.filter(t => t !== team) };
+                                            }
                                           }
-                                        }
-                                        return tool;
-                                      });
-                                      
-                                      setReviewForm({
-                                        ...reviewForm,
-                                        allowed_teams: newAllowedTeams,
-                                        tools: updatedTools
-                                      });
-                                      setScannedTools(updatedScannedTools);
-                                    }}
-                                    style={{ marginRight: '8px' }}
-                                  />
-                                  <span>{team}</span>
-                                </label>
-                              ))}
+                                          return tool;
+                                        });
+                                        
+                                        setReviewForm({
+                                          ...reviewForm,
+                                          allowed_teams: newAllowedTeams,
+                                          tools: updatedTools
+                                        });
+                                        setScannedTools(updatedScannedTools);
+                                      }}
+                                      style={{ marginRight: '8px' }}
+                                    />
+                                    <span>{team}</span>
+                                  </label>
+                                ))
+                              ) : (
+                                <p style={{ fontSize: '0.85rem', color: '#999', marginTop: '8px' }}>팀 목록을 불러오는 중...</p>
+                              )}
                             </div>
-                            <p style={{ marginTop: '8px', fontSize: '0.85rem', color: '#6c5d53' }}>
-                              선택하지 않으면 모든 팀이 접근 가능합니다.
-                            </p>
                           </label>
                           <label style={{ marginTop: '16px' }}>
-                            <strong>검토 코멘트 (선택)</strong>
+                            <strong>검토 코멘트 (선택사항)</strong>
                             <textarea
                               value={reviewForm.comment}
                               onChange={(e) => setReviewForm({ ...reviewForm, comment: e.target.value })}
@@ -1114,13 +1471,15 @@ const RequestBoard = () => {
                           <div className="review-form-actions" style={{ marginTop: '20px', display: 'flex', gap: '12px' }}>
                             <button
                               className={`btn-review ${reviewForm.status === 'approved' ? 'btn-approve active' : 'btn-approve'}`}
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
                                 if (!reviewForm.server_description.trim()) {
                                   alert('승인 시 서버 설명은 필수입니다.');
                                   return;
                                 }
                                 setReviewForm({ ...reviewForm, status: 'approved' });
-                                handleReview();
+                                handleReview('approved');
                               }}
                               style={{ flex: 1 }}
                             >
@@ -1128,16 +1487,22 @@ const RequestBoard = () => {
                             </button>
                             <button
                               className={`btn-review ${reviewForm.status === 'rejected' ? 'btn-reject active' : 'btn-reject'}`}
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
                                 setReviewForm({ ...reviewForm, status: 'rejected' });
-                                handleReview();
+                                handleReview('rejected');
                               }}
                               style={{ flex: 1 }}
                             >
                               거부
                             </button>
                             <button 
-                              onClick={handleCloseDetail} 
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleCloseDetail();
+                              }}
                               className="btn-cancel-review"
                               style={{ flex: 1 }}
                             >
@@ -1201,6 +1566,65 @@ const RequestBoard = () => {
                       <p className="detail-text">{selectedRequest.review_comment}</p>
                     </div>
                   )}
+                  {/* 삭제 버튼 (관리자 또는 요청자 본인만) */}
+                  {(() => {
+                    const isAdmin = user && (
+                      (Array.isArray(user.roles) && user.roles.includes('admin')) || 
+                      user.role === 'admin'
+                    );
+                    const isOwner = user && selectedRequest.requester && user.id === selectedRequest.requester.id;
+                    
+                    if (isAdmin || isOwner) {
+                      return (
+                        <div className="detail-item" style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid #e0e0e0' }}>
+                          <button
+                            onClick={async () => {
+                              if (!window.confirm('정말로 이 등록 요청을 삭제하시겠습니까? 승인된 요청인 경우 관련 MCP 서버도 함께 삭제됩니다.')) {
+                                return;
+                              }
+                              
+                              try {
+                                const token = localStorage.getItem('token');
+                                const res = await fetch(`http://localhost:3001/api/marketplace/requests/${selectedRequest.id}`, {
+                                  method: 'DELETE',
+                                  headers: {
+                                    'Authorization': `Bearer ${token}`
+                                  }
+                                });
+                                
+                                const data = await res.json();
+                                
+                                if (data.success) {
+                                  alert('등록 요청이 삭제되었습니다.');
+                                  handleCloseDetail();
+                                  fetchRequests();
+                                } else {
+                                  alert(data.message || '삭제 중 오류가 발생했습니다.');
+                                }
+                              } catch (error) {
+                                console.error('삭제 오류:', error);
+                                alert('삭제 중 오류가 발생했습니다.');
+                              }
+                            }}
+                            className="btn-delete"
+                            style={{
+                              padding: '8px 16px',
+                              backgroundColor: '#dc2626',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              fontSize: '0.9rem',
+                              fontWeight: '500'
+                            }}
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               )}
             </div>

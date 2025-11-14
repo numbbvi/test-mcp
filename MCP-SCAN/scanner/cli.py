@@ -8,7 +8,7 @@ from rich import print
 from scanner.runner.manager import MCPScannerManager
 from scanner.ui.colors import make_console, build_gradient_text
 from scanner.analyzers.common.utils import is_github_repo, filter_findings_by_severity
-from scanner.analyzers.common.constants import SEVERITY_INFO, ARTIFACTS_DIR, TEMP_DIR
+from scanner.analyzers.common.constants import SEVERITY_INFO, OUTPUT_DIR, TEMP_DIR
 
 def print_banner():
     console = make_console()
@@ -76,7 +76,7 @@ def main():
         # 파일명에 특수문자 제거 및 안전한 이름으로 변환
         safe_output_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in output_name)
         
-        out = ARTIFACTS_DIR / f"{safe_output_name}.json"
+        out = OUTPUT_DIR / f"{safe_output_name}.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"[green]Detailed results saved:[/green] {out.resolve()}")

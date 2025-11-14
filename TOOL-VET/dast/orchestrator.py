@@ -52,13 +52,23 @@ def parse_args():
 
 def load_env_file(env_file: str) -> Dict[str, str]:
     env_vars = {}
-    if Path(env_file).exists():
-        with Path(env_file).open("r", encoding="utf-8") as f:
+    env_path = Path(env_file)
+    print(f"[DEBUG] .env 파일 경로: {env_path} (절대 경로: {env_path.resolve()})")
+    print(f"[DEBUG] .env 파일 존재 여부: {env_path.exists()}")
+    
+    if env_path.exists():
+        with env_path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
-                    key, value = line.split("=", 1)
-                    env_vars[key] = value
+                    if "=" in line:
+                        key, value = line.split("=", 1)
+                        env_vars[key] = value
+                        print(f"[DEBUG] 환경 변수 로드: {key}=*** (길이: {len(value)})")
+    else:
+        print(f"[DEBUG] .env 파일이 존재하지 않습니다: {env_path}")
+    
+    print(f"[DEBUG] 총 {len(env_vars)}개의 환경 변수가 로드되었습니다.")
     return env_vars
 
 
@@ -134,7 +144,14 @@ def start_mcp_server(
         "https_proxy": proxy_url,
     })
     if extra_env:
+        print(f"[DEBUG] MCP 서버에 환경 변수 전달: {list(extra_env.keys())}")
         env.update(extra_env)
+        # 환경 변수가 실제로 설정되었는지 확인
+        for key in extra_env.keys():
+            if key in env:
+                print(f"[DEBUG] 환경 변수 확인: {key} = *** (설정됨)")
+            else:
+                print(f"[DEBUG] 환경 변수 확인: {key} = (설정되지 않음!)", file=sys.stderr)
     
     if background:
         return subprocess.Popen(
@@ -219,9 +236,52 @@ def main():
     args = parse_args()
     
     output_dir = Path(args.output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 볼륨 마운트로 인해 stat()이 실패할 수 있으므로, 직접 파일 쓰기로 권한 확인
+    try:
+        # 디렉토리 생성 시도
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError) as mkdir_error:
+            # 디렉토리 생성 실패 (이미 존재하거나 권한 문제)
+            pass
+        
+        # 권한 설정 시도 (볼륨 마운트로 인해 실패할 수 있음)
+        try:
+            os.chmod(output_dir, 0o777)
+        except (PermissionError, OSError):
+            # 권한 설정 실패해도 계속 진행 (볼륨 마운트로 인한 제한일 수 있음)
+            pass
+        
+        # 실제 파일 쓰기로 권한 확인
+        test_file = output_dir / '.write_test'
+        try:
+            test_file.write_text('test')
+            test_file.unlink()
+            print(f"[INFO] output 디렉토리 쓰기 권한 확인 완료: {output_dir}")
+        except (PermissionError, OSError) as write_error:
+            print(f"[ERROR] output 디렉토리에 쓰기 권한이 없습니다: {write_error}")
+            print(f"[ERROR] 경로: {output_dir}")
+            print(f"[ERROR] 호스트에서 디렉토리 권한을 확인해주세요: chmod -R 777 {output_dir}")
+            sys.exit(1)
+    except Exception as e:
+        # 예상치 못한 오류
+        print(f"[ERROR] output 디렉토리 확인 중 오류 발생: {e}")
+        print(f"[ERROR] 경로: {output_dir}")
+        # 파일 쓰기로 최종 확인
+        try:
+            test_file = output_dir / '.write_test'
+            test_file.write_text('test')
+            test_file.unlink()
+            print(f"[INFO] 파일 쓰기 테스트 성공, 계속 진행")
+        except:
+            print(f"[ERROR] 파일 쓰기 테스트 실패, 분석을 중단합니다")
+            sys.exit(1)
+    
     proxy_url = "http://127.0.0.1:8081"
+    print(f"[DEBUG] --env-file 인자: {args.env_file}")
     env_overrides = load_env_file(args.env_file)
+    print(f"[DEBUG] env_overrides: {list(env_overrides.keys())}")
 
     with tempfile.TemporaryDirectory(prefix="mcp-vetting-") as temp_dir:
         temp_path = Path(temp_dir)
@@ -375,6 +435,11 @@ def main():
             print(f"✅ tools/list로 가져온 tool: {len(tools)}개")
         else:
             print("❌ tools/list로 tool을 가져오지 못했습니다.", file=sys.stderr)
+            # 오류 상세 정보 출력
+            if harness_report and harness_report.calls:
+                for call in harness_report.calls:
+                    if not call.success:
+                        print(f"   오류: {call.name} - {call.error}", file=sys.stderr)
             if server_proc:
                 kill_process(server_proc)
             kill_process(proxy_proc)

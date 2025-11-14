@@ -18,6 +18,11 @@ router.get('/scan-progress', riskAssessmentController.getScanProgress);
 // 스캔 결과 조회
 router.get('/code-vulnerabilities', riskAssessmentController.getCodeVulnerabilities);
 router.get('/oss-vulnerabilities', riskAssessmentController.getOssVulnerabilities);
+router.get('/tool-validation-vulnerabilities', riskAssessmentController.getToolValidationVulnerabilities);
+router.get('/tool-validation-reports', riskAssessmentController.getToolValidationReports);
+
+// 기존 리포트 임포트 (수동)
+router.post('/import-tool-validation-reports', riskAssessmentController.importToolValidationReports);
 
 module.exports = router;
 

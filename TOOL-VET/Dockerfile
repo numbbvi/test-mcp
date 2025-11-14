@@ -35,6 +35,10 @@ WORKDIR /app
 
 COPY . /app
 
+# output 디렉토리 생성 및 권한 설정
+RUN mkdir -p /app/output /app/temp_env && \
+    chmod -R 777 /app/output /app/temp_env
+
 # mitmproxy CA 생성 및 시스템 신뢰 저장소에 등록
 RUN mkdir -p /tmp/mitmproxy && \
     (mitmdump --quiet --set confdir=/tmp/mitmproxy --listen-host 127.0.0.1 --listen-port 0 & pid=$!; \

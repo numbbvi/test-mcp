@@ -1,55 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import Pagination from '../../components/Pagination';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './DownloadLogs.css';
 
 const DownloadLogs = () => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTeam, setSelectedTeam] = useState('');
-  const [teams, setTeams] = useState([]);
-  const [teamDropdownOpen, setTeamDropdownOpen] = useState(false);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0 });
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState(null);
+  const searchTimeoutRef = useRef(null);
+  const isInitialLoad = useRef(true);
+  const skipPageEffect = useRef(false);
 
-  // 팀 목록 가져오기
-  useEffect(() => {
-    fetchTeams();
-  }, []);
-
-  useEffect(() => {
-    setPagination(prev => ({ ...prev, page: 1 }));
-  }, [searchQuery, selectedTeam]);
-
-  useEffect(() => {
-    fetchLogs();
-  }, [searchQuery, selectedTeam, pagination.page]);
-
-  const fetchTeams = async () => {
-    try {
-      const res = await fetch('http://localhost:3001/api/file/download-logs/teams');
-      const data = await res.json();
-      if (data.success) {
-        setTeams(data.data || []);
-      }
-    } catch (error) {
-      console.error('팀 목록 조회 실패:', error);
-    }
-  };
-
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async (query, page) => {
     try {
       setLoading(true);
       
       const queryParams = new URLSearchParams();
-      if (searchQuery) {
-        queryParams.append('search', searchQuery);
+      if (query) {
+        queryParams.append('username', query);
       }
-      if (selectedTeam) {
-        queryParams.append('team', selectedTeam);
-      }
-      queryParams.append('page', pagination.page);
+      queryParams.append('page', page);
       queryParams.append('limit', '20');
       
       const res = await fetch(`http://localhost:3001/api/file/download-logs?${queryParams}`);
@@ -59,32 +30,99 @@ const DownloadLogs = () => {
         const fetchedLogs = data.data || [];
         
         setLogs(fetchedLogs);
+        // 페이지 상태 업데이트 시 skipPageEffect 플래그 설정하여 무한 루프 방지
+        skipPageEffect.current = true;
         setPagination(prev => ({
           ...prev,
+          page: page,
           total: data.pagination?.total || fetchedLogs.length || 0,
           totalPages: data.pagination?.totalPages || Math.ceil((fetchedLogs.length || 0) / 20) || 1
         }));
+        // 다음 렌더링 사이클 후 플래그 리셋
+        setTimeout(() => {
+          skipPageEffect.current = false;
+        }, 0);
       } else {
         setLogs([]);
+        skipPageEffect.current = true;
         setPagination(prev => ({
           ...prev,
+          page: page,
           total: 0,
           totalPages: 1
         }));
+        setTimeout(() => {
+          skipPageEffect.current = false;
+        }, 0);
       }
       
     } catch (error) {
       console.error('다운로드 로그 조회 실패:', error);
       setLogs([]);
+      skipPageEffect.current = true;
       setPagination(prev => ({
         ...prev,
+        page: page,
         total: 0,
         totalPages: 1
       }));
+      setTimeout(() => {
+        skipPageEffect.current = false;
+      }, 0);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // 초기 로드
+  useEffect(() => {
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
+      fetchLogs('', 1);
+    }
+  }, [fetchLogs]);
+
+  // 검색어 변경 시 디바운싱 적용
+  useEffect(() => {
+    // 초기 로드는 무시
+    if (isInitialLoad.current) {
+      return;
+    }
+
+    // 기존 타이머 취소
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    // 디바운싱: 300ms 후 API 호출
+    searchTimeoutRef.current = setTimeout(() => {
+      // 페이지는 1로 리셋하여 fetchLogs 호출
+      skipPageEffect.current = true;
+      fetchLogs(searchQuery, 1);
+    }, 300);
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [searchQuery, fetchLogs]);
+
+  // 페이지 변경 시 (검색어 변경에 의한 것이 아닌 경우만)
+  useEffect(() => {
+    // 초기 로드는 무시
+    if (isInitialLoad.current) {
+      return;
+    }
+
+    // fetchLogs에서 페이지 상태를 업데이트한 경우 무시 (무한 루프 방지)
+    if (skipPageEffect.current) {
+      return;
+    }
+
+    // 사용자가 직접 페이지를 변경한 경우
+    fetchLogs(searchQuery, pagination.page);
+  }, [pagination.page, searchQuery, fetchLogs]);
 
   const formatDate = (dateString) => {
     if (!dateString) return '-';
@@ -174,18 +212,11 @@ const DownloadLogs = () => {
     );
   };
 
-  if (loading) {
-    return <div>로딩 중...</div>;
-  }
-
   return (
     <section className="download-logs">
-      <div className="download-logs-header">
-        <h1>Download Logs</h1>
-        <button onClick={() => fetchLogs()} className="btn-refresh">새로고침</button>
-      </div>
+      <h1>Download Logs</h1>
 
-      <div className="filters">
+      <div className="download-logs-controls">
         <div className="search-container">
           <svg className="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" strokeWidth="1.5"/>
@@ -194,64 +225,20 @@ const DownloadLogs = () => {
           <input
             type="text"
             className="search-input"
+            placeholder="Search users"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="사용자 또는 사원번호 검색"
           />
         </div>
-
-        <div className="controls-right">
-          <div className="sort-dropdown">
-            <button 
-              className="sort-button" 
-              onClick={(e) => {
-                e.stopPropagation();
-                setTeamDropdownOpen(!teamDropdownOpen);
-              }}
-            >
-              {selectedTeam || '전체 팀'}
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
-            {teamDropdownOpen && (
-              <>
-                <div 
-                  className="sort-menu-overlay"
-                  onClick={() => setTeamDropdownOpen(false)}
-                />
-                <div className={`sort-menu ${teamDropdownOpen ? 'open' : ''}`}>
-                  <div className="sort-menu-header">팀 선택</div>
-                  <button 
-                    className={`sort-option ${selectedTeam === '' ? 'selected' : ''}`}
-                    onClick={() => {
-                      setSelectedTeam('');
-                      setTeamDropdownOpen(false);
-                    }}
-                  >
-                    전체 팀
-                  </button>
-                  {teams.map((team) => (
-                    <button 
-                      key={team}
-                      className={`sort-option ${selectedTeam === team ? 'selected' : ''}`}
-                      onClick={() => {
-                        setSelectedTeam(team);
-                        setTeamDropdownOpen(false);
-                      }}
-                    >
-                      {team}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+        <button onClick={() => fetchLogs(searchQuery, pagination.page)} className="btn-refresh">새로고침</button>
       </div>
 
       <div className="logs-table-container">
-        <div className="logs-table-wrapper">
+        {loading && logs.length === 0 ? (
+          <div className="empty-state">로딩 중...</div>
+        ) : sortedLogs.length === 0 ? (
+          <div className="empty-state">다운로드 로그가 없습니다.</div>
+        ) : (
           <table className="logs-table">
             <thead>
               <tr>
@@ -268,35 +255,21 @@ const DownloadLogs = () => {
               </tr>
             </thead>
             <tbody>
-              {sortedLogs.length === 0 ? (
-                <tr>
-                  <td colSpan="7" style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
-                    다운로드 로그가 없습니다.
-                  </td>
+              {sortedLogs.map((log) => (
+                <tr key={log.id}>
+                  <td>{formatDate(log.downloaded_at)}</td>
+                  <td>{log.username || '-'}</td>
+                  <td>{log.employee_id || '-'}</td>
+                  <td>{log.team || '-'}</td>
+                  <td>{log.mcp_server_name || '-'}</td>
+                  <td className="file-name-cell">{log.file_name || log.file_path || '-'}</td>
+                  <td>{log.ip_address || '-'}</td>
                 </tr>
-              ) : (
-                sortedLogs.map((log) => (
-                  <tr key={log.id}>
-                    <td>{formatDate(log.downloaded_at)}</td>
-                    <td>{log.username || '-'}</td>
-                    <td>{log.employee_id || '-'}</td>
-                    <td>{log.team || '-'}</td>
-                    <td>{log.mcp_server_name || '-'}</td>
-                    <td className="file-name-cell">{log.file_name || log.file_path || '-'}</td>
-                    <td>{log.ip_address || '-'}</td>
-                  </tr>
-                ))
-              )}
+              ))}
             </tbody>
           </table>
-        </div>
+        )}
       </div>
-
-      <Pagination
-        currentPage={pagination.page}
-        totalPages={pagination.totalPages}
-        onPageChange={(page) => setPagination(prev => ({ ...prev, page }))}
-      />
     </section>
   );
 };

@@ -1,52 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
-import Pagination from '../../components/Pagination';
 import './Dlp.css';
 
 const Dlp = () => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedLog, setSelectedLog] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0 });
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState(null);
-  const [detailPanelWidth, setDetailPanelWidth] = useState(600);
-  const [isResizing, setIsResizing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedViolationType, setSelectedViolationType] = useState('');
-  const [violationTypes, setViolationTypes] = useState([]);
-  const [violationTypeDropdownOpen, setViolationTypeDropdownOpen] = useState(false);
   const paginationRef = useRef(pagination);
-  const detailPanelRef = useRef(null);
 
   // pagination ref 업데이트
   useEffect(() => {
     paginationRef.current = pagination;
   }, [pagination]);
 
-  // 위반 유형 목록 가져오기
-  useEffect(() => {
-    fetchViolationTypes();
-  }, []);
-
   useEffect(() => {
     setPagination(prev => ({ ...prev, page: 1 }));
-  }, [searchQuery, selectedViolationType]);
+  }, [searchQuery]);
 
   useEffect(() => {
     fetchLogs();
-  }, [pagination.page, selectedViolationType]);
-
-  const fetchViolationTypes = async () => {
-    try {
-      const res = await fetch('http://localhost:3001/api/dlp/violation-types');
-      const data = await res.json();
-      if (data.success) {
-        setViolationTypes(data.data || []);
-      }
-    } catch (error) {
-      console.error('위반 유형 목록 조회 실패:', error);
-    }
-  };
+  }, [pagination.page]);
 
   // 실시간 업데이트를 위한 SSE 연결
   useEffect(() => {
@@ -125,9 +101,6 @@ const Dlp = () => {
       setLoading(true);
       
       const queryParams = new URLSearchParams();
-      if (selectedViolationType) {
-        queryParams.append('violation_type', selectedViolationType);
-      }
       queryParams.append('page', pagination.page);
       queryParams.append('limit', '20');
 
@@ -135,28 +108,7 @@ const Dlp = () => {
       const data = await res.json();
       
       if (data.success) {
-        let fetchedLogs = data.data || [];
-        
-        // 데이터가 없으면 예시 값 하나 추가
-        if (fetchedLogs.length === 0 && pagination.page === 1) {
-          fetchedLogs = [{
-            id: 1,
-            timestamp: '2025-01-15 14:30:25',
-            username: 'john.doe',
-            employee_id: 'EMP001',
-            source_ip: '192.168.1.100',
-            action_type: 'request',
-            violation_type: 'PII',
-            severity: 'high',
-            file_name: 'user_data.json',
-            matched_pattern: 'SSN Pattern',
-            rule_name: 'PII Detection Rule',
-            status: 'pending',
-            original_text: 'User SSN: 123-45-6789',
-            masked_text: 'User SSN: ***-**-****'
-          }];
-        }
-        
+        const fetchedLogs = data.data || [];
         setLogs(fetchedLogs);
         
         setPagination(prev => ({
@@ -241,24 +193,16 @@ const Dlp = () => {
     }
   };
 
-  // 검색 필터링 (사용자 및 위반 유형 중심)
-  const filteredLogs = searchQuery
-    ? logs.filter(log => {
-        const searchLower = searchQuery.toLowerCase();
-        const violationTypeText = getViolationTypeText(log.violation_type).toLowerCase();
-        return (
-          (log.username || '').toLowerCase().includes(searchLower) ||
-          (log.employee_id || '').toLowerCase().includes(searchLower) ||
-          (log.source_ip || '').toLowerCase().includes(searchLower) ||
-          (log.violation_type || '').toLowerCase().includes(searchLower) ||
-          violationTypeText.includes(searchLower) ||
-          (log.file_name || '').toLowerCase().includes(searchLower) ||
-          (log.matched_pattern || '').toLowerCase().includes(searchLower) ||
-          (log.rule_name || '').toLowerCase().includes(searchLower) ||
-          (log.original_text || '').toLowerCase().includes(searchLower)
-        );
-      })
-    : logs;
+  // 검색 필터링
+  const filteredLogs = searchQuery ? logs.filter(log => {
+    const searchLower = searchQuery.toLowerCase();
+    return (
+      (log.username && log.username.toLowerCase().includes(searchLower)) ||
+      (log.employee_id && log.employee_id.toLowerCase().includes(searchLower)) ||
+      (log.source_ip && log.source_ip.toLowerCase().includes(searchLower)) ||
+      (log.violation_type && log.violation_type.toLowerCase().includes(searchLower))
+    );
+  }) : logs;
 
   const sortedLogs = sortColumn && sortDirection ? [...filteredLogs].sort((a, b) => {
     let aValue = a[sortColumn];
@@ -400,38 +344,6 @@ const Dlp = () => {
     };
   }, [selectedLog]);
 
-  // Resize 기능
-  useEffect(() => {
-    if (!isResizing) return;
-
-    const handleMouseMove = (e) => {
-      if (!isResizing) return;
-      const newWidth = window.innerWidth - e.clientX;
-      const minWidth = 400;
-      const maxWidth = window.innerWidth * 0.9;
-      if (newWidth >= minWidth && newWidth <= maxWidth) {
-        setDetailPanelWidth(newWidth);
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizing]);
-
-  const handleResizeStart = (e) => {
-    e.preventDefault();
-    setIsResizing(true);
-  };
-
   if (loading) {
     return <div className="dlp-loading">로딩 중...</div>;
   }
@@ -442,9 +354,6 @@ const Dlp = () => {
     <section className="dlp-page">
           <div className="dlp-header">
       <h1>DLP Violation Logs</h1>
-        <button onClick={() => fetchLogs()} className="btn-refresh">
-          새로고침
-        </button>
       </div>
 
       <div className="dlp-controls">
@@ -456,60 +365,14 @@ const Dlp = () => {
           <input
             type="text"
             className="search-input"
-            placeholder="사용자 또는 위반 유형 검색"
+            placeholder="Search users"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-
-        <div className="controls-right">
-          <div className="sort-dropdown">
-            <button 
-              className="sort-button" 
-              onClick={(e) => {
-                e.stopPropagation();
-                setViolationTypeDropdownOpen(!violationTypeDropdownOpen);
-              }}
-            >
-              {selectedViolationType ? getViolationTypeText(selectedViolationType) : '전체 위반 유형'}
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
-            {violationTypeDropdownOpen && (
-              <>
-                <div 
-                  className="sort-menu-overlay"
-                  onClick={() => setViolationTypeDropdownOpen(false)}
-                />
-                <div className={`sort-menu ${violationTypeDropdownOpen ? 'open' : ''}`}>
-                  <div className="sort-menu-header">위반 유형 선택</div>
-                  <button 
-                    className={`sort-option ${selectedViolationType === '' ? 'selected' : ''}`}
-                    onClick={() => {
-                      setSelectedViolationType('');
-                      setViolationTypeDropdownOpen(false);
-                    }}
-                  >
-                    전체 위반 유형
-                  </button>
-                  {violationTypes.map((type) => (
-                    <button 
-                      key={type}
-                      className={`sort-option ${selectedViolationType === type ? 'selected' : ''}`}
-                      onClick={() => {
-                        setSelectedViolationType(type);
-                        setViolationTypeDropdownOpen(false);
-                      }}
-                    >
-                      {getViolationTypeText(type)}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+        <button onClick={() => fetchLogs()} className="btn-refresh">
+          새로고침
+        </button>
       </div>
 
       <div className="dlp-logs-container">
@@ -523,10 +386,7 @@ const Dlp = () => {
                 </th>
                 <th>사용자</th>
                 <th>위반 유형</th>
-                <th className="sortable" onClick={(e) => { e.stopPropagation(); handleSort('severity'); }}>
-                  심각도
-                  {getSortIcon('severity')}
-                </th>
+                <th>심각도</th>
                 <th>내용</th>
                 <th>작업</th>
               </tr>
@@ -568,7 +428,7 @@ const Dlp = () => {
                           handleViewDetail(log);
                         }}
                       >
-                        View
+                        상세보기
                       </button>
                     </td>
                   </tr>
@@ -578,25 +438,11 @@ const Dlp = () => {
           </table>
         </div>
           </div>
-
-          <Pagination
-            currentPage={pagination.page}
-            totalPages={pagination.totalPages}
-            onPageChange={(page) => setPagination(prev => ({ ...prev, page }))}
-          />
         </section>
       </div>
 
       {selectedLog && (
-        <div 
-          className={`dlp-right ${isResizing ? 'resizing' : ''}`}
-          style={{ width: `${detailPanelWidth}px` }}
-          ref={detailPanelRef}
-        >
-          <div 
-            className="dlp-resize-handle"
-            onMouseDown={handleResizeStart}
-          />
+        <div className="dlp-right">
           <div className="dlp-detail-content">
             <div className="dlp-detail-header">
               <div className="dlp-detail-title">

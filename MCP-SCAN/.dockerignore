@@ -26,8 +26,8 @@ scanner/analyzers/rules/parsers/go_parser
 # Node modules
 node_modules/
 
-# Artifacts
-artifacts/
+# Output
+output/
 
 # Test and backup files
 test/

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
+import Pagination from '../../components/Pagination';
 import './RiskAssessment.css';
 
 const RiskAssessment = () => {
@@ -29,10 +30,36 @@ const RiskAssessment = () => {
   const [currentPathIndex, setCurrentPathIndex] = useState(0); // 현재 표시 중인 경로 인덱스
   const [sbomScannerData, setSbomScannerData] = useState([]);
   const [toolValidationIssues, setToolValidationIssues] = useState([]);
-  const [detailPanelWidth, setDetailPanelWidth] = useState(600);
-  const [isResizing, setIsResizing] = useState(false);
-  const detailPanelRef = useRef(null);
+  const [showMcpInfoModal, setShowMcpInfoModal] = useState(false);
   const [packagesData, setPackagesData] = useState([]);
+  const [toolValidationReport, setToolValidationReport] = useState(null); // Tool Validation 리포트 데이터 (tool 정보 포함)
+  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0, limit: 20 });
+
+  // 상태 뱃지 표시 함수
+  const getStatusBadge = (status) => {
+    if (!status) return null;
+    const statusMap = {
+      'pending': { text: '대기중', color: '#f59e0b', bgColor: '#fef3c7' },
+      'approved': { text: '승인됨', color: '#10b981', bgColor: '#d1fae5' },
+      'rejected': { text: '거부됨', color: '#ef4444', bgColor: '#fee2e2' }
+    };
+    const statusInfo = statusMap[status] || { text: status, color: '#6b7280', bgColor: '#f3f4f6' };
+    
+    return (
+      <span style={{
+        display: 'inline-block',
+        padding: '4px 8px',
+        borderRadius: '4px',
+        fontSize: '0.75rem',
+        fontWeight: '500',
+        color: statusInfo.color,
+        backgroundColor: statusInfo.bgColor,
+        border: `1px solid ${statusInfo.color}20`
+      }}>
+        {statusInfo.text}
+      </span>
+    );
+  };
 
   // 스캔 결과를 Risk Assessment 형식으로 변환
   const formatScanResults = (findings) => {
@@ -240,9 +267,9 @@ const RiskAssessment = () => {
                         setPackagesData(Array.isArray(ossData.packages) ? ossData.packages : []);
                         
                         if (ossData.data) {
-                          setOssIssues(ossData.data);
-                        } else {
-                          setOssIssues([]);
+                        setOssIssues(ossData.data);
+                      } else {
+                        setOssIssues([]);
                         }
                       } else {
                         setOssIssues([]);
@@ -254,8 +281,25 @@ const RiskAssessment = () => {
                       setPackagesData([]);
                     }
                     
-                    // Tool Validation은 현재 데이터베이스에 저장되지 않음
+                    // Tool Validation 데이터 로드
+                    try {
+                      const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(server.github_link || server.file_path || '')}`, {
+                        headers: {
+                          'Authorization': `Bearer ${token}`
+                        }
+                      });
+                      const toolValidationData = await toolValidationRes.json();
+                      
+                      if (toolValidationData.success && toolValidationData.data) {
+                        setToolValidationIssues(toolValidationData.data);
+                      } else {
                     setToolValidationIssues([]);
+                      }
+                    } catch (error) {
+                      console.error('Tool Validation 데이터 로드 실패:', error);
+                      setToolValidationIssues([]);
+                    }
+                    
                     setSbomScannerData([]);
                     
                     // 결과 뷰로 전환
@@ -405,9 +449,9 @@ const RiskAssessment = () => {
                 setPackagesData(Array.isArray(ossData.packages) ? ossData.packages : []);
                 
                 if (ossData.data) {
-                  setOssIssues(ossData.data);
-                } else {
-                  setOssIssues([]);
+                setOssIssues(ossData.data);
+              } else {
+                setOssIssues([]);
                 }
               } else {
                 setOssIssues([]);
@@ -430,8 +474,25 @@ const RiskAssessment = () => {
           setPackagesData([]);
         }
         
-        // Tool Validation은 현재 데이터베이스에 저장되지 않음
+        // Tool Validation 데이터 로드
+        try {
+          const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(analysisUrl)}`, {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          const toolValidationData = await toolValidationRes.json();
+          
+          if (toolValidationData.success && toolValidationData.data) {
+            setToolValidationIssues(toolValidationData.data);
+          } else {
         setToolValidationIssues([]);
+          }
+        } catch (error) {
+          console.error('Tool Validation 데이터 로드 실패:', error);
+          setToolValidationIssues([]);
+        }
+        
         setSbomScannerData([]);
         
         // 결과 뷰로 전환
@@ -484,6 +545,8 @@ const RiskAssessment = () => {
         const data = await res.json();
         if (data.success) {
           setMcpServers(data.data || []);
+          // 페이지 필터 변경 시 첫 페이지로 리셋
+          setPagination(prev => ({ ...prev, page: 1 }));
         }
       } catch (error) {
         console.error('MCP 서버 목록 로드 실패:', error);
@@ -494,6 +557,11 @@ const RiskAssessment = () => {
       loadMcpServers();
     }
   }, [viewMode, serverFilter]);
+
+  // 검색어 변경 시 첫 페이지로 리셋
+  useEffect(() => {
+    setPagination(prev => ({ ...prev, page: 1 }));
+  }, [searchTerm]);
 
   // localStorage에서 scanId 또는 scan_path를 읽어서 자동으로 결과 뷰로 전환
   useEffect(() => {
@@ -581,8 +649,25 @@ const RiskAssessment = () => {
             setOssIssues([]);
           }
           
-          // Tool Validation은 현재 데이터베이스에 저장되지 않음
+          // Tool Validation 데이터 로드
+          try {
+            const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(githubUrl || scanPath)}`, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
+            const toolValidationData = await toolValidationRes.json();
+            
+            if (toolValidationData.success && toolValidationData.data) {
+              setToolValidationIssues(toolValidationData.data);
+            } else {
           setToolValidationIssues([]);
+            }
+          } catch (error) {
+            console.error('Tool Validation 데이터 로드 실패:', error);
+            setToolValidationIssues([]);
+          }
+          
           setSbomScannerData([]);
           
           setAnalysisUrl(githubUrl || scanPath);
@@ -653,6 +738,40 @@ const RiskAssessment = () => {
     };
   }, [selectedOssIssue]);
 
+  // Tool Validation 리포트 데이터 가져오기 (tool 정보 포함)
+  useEffect(() => {
+    const fetchToolValidationReport = async () => {
+      if (selectedTab === 'Tool Validation' && selectedIssue?.tool_name && analysisUrl) {
+        try {
+          const token = localStorage.getItem('token');
+          const reportRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-reports?scan_path=${encodeURIComponent(analysisUrl)}`, {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          const reportData = await reportRes.json();
+          
+          if (reportData.success && reportData.data && reportData.data.length > 0) {
+            // report_data가 문자열이면 파싱
+            const report = reportData.data[0];
+            if (typeof report.report_data === 'string') {
+              report.report_data = JSON.parse(report.report_data);
+            }
+            setToolValidationReport(report);
+          } else {
+            setToolValidationReport(null);
+          }
+        } catch (error) {
+          console.error('Tool Validation 리포트 데이터 로드 실패:', error);
+          setToolValidationReport(null);
+        }
+      } else {
+        setToolValidationReport(null);
+      }
+    };
+
+    fetchToolValidationReport();
+  }, [selectedTab, selectedIssue, analysisUrl]);
 
   // 심각도 점수 계산 함수 (CVSS 점수 우선, 없으면 심각도 텍스트를 점수로 변환)
   const getSeverityScore = (severity, cvss) => {
@@ -687,7 +806,7 @@ const RiskAssessment = () => {
           const pkgData = packagesData.find(p => p.name === pkgName);
           
           return {
-            ...issue,
+          ...issue,
             // 각 취약점마다 고유한 ID 생성 (패키지명 + 취약점 ID)
             id: issue.id || `oss-${index}-${pkgName}-${vulnId || index}`,
             severityScore: getSeverityScore(issue.vulnerability?.severity, issue.vulnerability?.cvss),
@@ -730,6 +849,27 @@ const RiskAssessment = () => {
     if (searchTerm && searchTerm.trim()) {
       const term = searchTerm.trim().toLowerCase();
       issues = issues.filter(issue => {
+        // Tool Validation 검색
+        if (selectedTab === 'Tool Validation') {
+          const toolName = issue.tool_name || '';
+          const host = issue.host || '';
+          const method = issue.method || '';
+          const path = issue.path || '';
+          const categoryCode = issue.category_code || '';
+          const categoryName = issue.category_name || '';
+          const title = issue.title || '';
+          const desc = issue.description || '';
+          return (
+            toolName.toLowerCase().includes(term) ||
+            host.toLowerCase().includes(term) ||
+            method.toLowerCase().includes(term) ||
+            path.toLowerCase().includes(term) ||
+            categoryCode.toLowerCase().includes(term) ||
+            categoryName.toLowerCase().includes(term) ||
+            title.toLowerCase().includes(term) ||
+            desc.toLowerCase().includes(term)
+          );
+        }
         // OSS Vulnerabilities 검색
         if (selectedTab === 'OSS Vulnerabilities' || selectedTab === 'Total Vulnerabilities') {
           const pkgName = issue.package?.name || '';
@@ -850,6 +990,157 @@ const RiskAssessment = () => {
 
   const renderIssuesTable = () => {
     const issues = getCurrentIssues();
+    
+    // Tool Validation 탭은 별도 처리
+    if (selectedTab === 'Tool Validation') {
+    return (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '24px' }}>
+          <div className="issues-table tool-validation-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tool</th>
+                  <th className="tool-validation-host">Host</th>
+                  <th className="tool-validation-method">Method</th>
+                  <th className="tool-validation-path">Path</th>
+                  <th>Vulnerability</th>
+                  <th>상세보기</th>
+                </tr>
+              </thead>
+              <tbody>
+                {issues.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                      데이터가 없습니다.
+                    </td>
+                  </tr>
+                ) : (
+                  (() => {
+                    // Endpoint별로 그룹화 (tool_name, host, method, path가 모두 같은 것)
+                    const endpointMap = new Map();
+                    issues.forEach(issue => {
+                      const key = `${issue.tool_name || ''}|${issue.host || ''}|${issue.method || ''}|${issue.path || ''}`;
+                      if (!endpointMap.has(key)) {
+                        endpointMap.set(key, []);
+                      }
+                      endpointMap.get(key).push(issue);
+                    });
+                    
+                    // Tool별로 다시 그룹화 (시각적 그룹화를 위해)
+                    const groupedByTool = {};
+                    endpointMap.forEach((endpointIssues, key) => {
+                      const toolName = endpointIssues[0].tool_name || 'Unknown';
+                      if (!groupedByTool[toolName]) {
+                        groupedByTool[toolName] = [];
+                      }
+                      groupedByTool[toolName].push(endpointIssues);
+                    });
+                    
+                    const rows = [];
+                    Object.entries(groupedByTool).forEach(([toolName, endpointGroups], toolIndex) => {
+                      endpointGroups.forEach((endpointIssues, endpointIndex) => {
+                        const isFirstInTool = endpointIndex === 0;
+                        const firstIssue = endpointIssues[0];
+                        const allCategoryCodes = endpointIssues.map(i => i.category_code).filter(Boolean);
+                        const uniqueCategoryCodes = [...new Set(allCategoryCodes)];
+                        
+                        rows.push(
+                          <tr
+                            key={`${firstIssue.tool_name}-${firstIssue.host}-${firstIssue.method}-${firstIssue.path}-${firstIssue.id}`}
+                            className={selectedIssue && endpointIssues.some(i => i.id === selectedIssue.id) ? 'selected' : ''}
+                            onClick={() => {
+                              // 첫 번째 이슈를 선택하되, 모든 취약점 정보를 포함
+                              setSelectedIssue({
+                                ...firstIssue,
+                                _allVulnerabilities: endpointIssues // 모든 취약점 정보 저장
+                              });
+                            }}
+                          >
+                            <td 
+                              className="package-name" 
+                              style={{ 
+                                verticalAlign: 'middle',
+                                fontWeight: isFirstInTool ? 600 : 400,
+                                color: isFirstInTool ? '#333' : 'transparent',
+                                paddingTop: isFirstInTool ? '12px' : '0',
+                                paddingBottom: isFirstInTool ? '12px' : '0',
+                                fontSize: '0.75rem',
+                                fontFamily: 'monospace'
+                              }}
+                            >
+                              {isFirstInTool ? toolName : ''}
+                            </td>
+                            <td>{firstIssue.host || '-'}</td>
+                            <td>
+                              <span style={{
+                                padding: '4px 8px',
+                                borderRadius: '4px',
+                                backgroundColor: firstIssue.method === 'GET' ? '#28a745' : 
+                                               firstIssue.method === 'POST' ? '#007bff' :
+                                               firstIssue.method === 'PUT' ? '#ffc107' :
+                                               firstIssue.method === 'DELETE' ? '#dc3545' : '#6c757d',
+                                color: '#fff',
+                                fontSize: '0.75rem',
+                                fontWeight: 600
+                              }}>
+                                {firstIssue.method || '-'}
+                              </span>
+                            </td>
+                            <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', whiteSpace: 'normal', wordBreak: 'break-word', overflowWrap: 'break-word' }}>{firstIssue.path || '-'}</td>
+                            <td>
+                              {uniqueCategoryCodes.length > 0 ? (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'center' }}>
+                                  {uniqueCategoryCodes.map((code, idx) => (
+                                    <span
+                                      key={idx}
+                                      style={{
+                                        padding: '4px 8px',
+                                        borderRadius: '4px',
+                                        backgroundColor: code === 'MCP-01' ? '#dc3545' :
+                                                       code === 'MCP-02' ? '#fd7e14' :
+                                                       code === 'MCP-03' ? '#ffc107' :
+                                                       code === 'MCP-04' ? '#20c997' : '#6c757d',
+                                        color: '#fff',
+                                        fontSize: '0.75rem',
+                                        fontWeight: 600
+                                      }}
+                                    >
+                                      {code}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div style={{ textAlign: 'center' }}>-</div>
+                              )}
+                            </td>
+                            <td>
+                              <button 
+                                className="oss-detail-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedIssue({
+                                    ...firstIssue,
+                                    _allVulnerabilities: endpointIssues
+                                  });
+                                }}
+                              >
+                                View Detail
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      });
+                    });
+                    
+                    return rows;
+                  })()
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
     
     return (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '24px' }}>
@@ -1131,7 +1422,7 @@ const RiskAssessment = () => {
                           <span style={{ color: '#6c757d' }}>-</span>
                         )}
                       </td>
-                      <td>
+                      <td style={{ textAlign: 'center' }}>
                         {reachabilityStatus !== 'unknown' ? (
                           <span className={`reachability-badge reachability-badge--${reachabilityStatus}`}>
                             {reachabilityBadge}
@@ -1326,14 +1617,21 @@ const RiskAssessment = () => {
       });
     }
 
+    // 페이지네이션 처리
+    const totalServers = filteredServers.length;
+    const totalPages = Math.ceil(totalServers / pagination.limit) || 1;
+    const startIndex = (pagination.page - 1) * pagination.limit;
+    const endIndex = startIndex + pagination.limit;
+    const paginatedServers = filteredServers.slice(startIndex, endIndex);
+
     return (
       <div className="risk-assessment-container">
-        <div className="risk-assessment-left">
-          <div className="risk-assessment-header">
-            <h1>Risk Assessment</h1>
+        <div className="risk-assessment-left" style={{ padding: '25px', minHeight: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+          <div className="risk-assessment-header" style={{ flexShrink: 0, padding: '0 0 8px 0', marginBottom: '8px', borderBottom: '1px solid var(--divider)' }}>
+            <h1 style={{ margin: '0 0 8px 0' }}>Risk Assessment</h1>
           </div>
 
-          <section className="list-page__controls-row">
+          <section className="list-page__controls-row" style={{ flexShrink: 0, marginTop: '8px' }}>
             <div className="list-page__header">
               <div>
                 <h2>MCP Server List</h2>
@@ -1379,12 +1677,12 @@ const RiskAssessment = () => {
             </div>
           </section>
 
-          <div className="table-wrapper">
+          <div className="table-wrapper" style={{ flex: 1, overflowY: 'auto', minHeight: 0, marginTop: '24px', marginBottom: '16px' }}>
             <table className="requests-table">
               <thead>
                 <tr>
                   <th>MCP 서버</th>
-                  <th>스택</th>
+                  <th>상태</th>
                   <th>패키지</th>
                   <th>취약점</th>
                   <th>도달 가능</th>
@@ -1393,19 +1691,19 @@ const RiskAssessment = () => {
                     분석 시간
                     {getSortIcon('analysis_timestamp')}
                   </th>
-                  <th>위험도 산정</th>
-                  <th>상세보기</th>
+                  <th>Run Analysis</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {filteredServers.length === 0 ? (
+                {paginatedServers.length === 0 ? (
                   <tr>
                     <td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
                       {searchTerm ? '검색 결과가 없습니다.' : 'MCP 서버가 없습니다.'}
                     </td>
                   </tr>
                 ) : (
-                  filteredServers.map(server => {
+                  paginatedServers.map(server => {
                     const isAnalyzing = analyzingServers[server.id] || false;
                     const progressData = analysisProgressServers[server.id];
                     const progress = typeof progressData === 'object' 
@@ -1422,9 +1720,15 @@ const RiskAssessment = () => {
                         <td>
                           <div className="system-row__title">{server.name}</div>
                         </td>
-                        <td className="system-row__stack">-</td>
-                        <td className="system-row__packages">-</td>
-                        <td className="system-row__vulns">-</td>
+                        <td>
+                          {getStatusBadge(server.status)}
+                        </td>
+                        <td className="system-row__packages">
+                          {server.package_count !== undefined && server.package_count !== null ? server.package_count : 0}
+                        </td>
+                        <td className="system-row__vulns">
+                          {server.code_vulnerability_count !== undefined && server.code_vulnerability_count !== null ? server.code_vulnerability_count : 0}
+                        </td>
                         <td className="system-row__reachable">-</td>
                         <td className="system-row__risk">-</td>
                         <td className="system-row__timestamp">
@@ -1634,8 +1938,28 @@ const RiskAssessment = () => {
                                   }
                                 }
                                 
-                                // Tool Validation은 현재 데이터베이스에 저장되지 않음
+                                // Tool Validation 데이터 로드
+                                try {
+                                  const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+                                    headers: {
+                                      'Authorization': `Bearer ${token}`
+                                    }
+                                  });
+                                  const toolValidationData = await toolValidationRes.json();
+                                  
+                                  if (toolValidationData.success && toolValidationData.data) {
+                                    setToolValidationIssues(toolValidationData.data);
+                                    console.log('Tool Validation 데이터 로드:', {
+                                      취약점개수: toolValidationData.data?.length || 0
+                                    });
+                                  } else {
                                 setToolValidationIssues([]);
+                                  }
+                                } catch (error) {
+                                  console.error('Tool Validation 데이터 로드 실패:', error);
+                                  setToolValidationIssues([]);
+                                }
+                                
                                 setSbomScannerData([]);
                                 
                                 // 결과 뷰로 전환
@@ -1659,6 +1983,17 @@ const RiskAssessment = () => {
               </tbody>
             </table>
           </div>
+          <Pagination
+            currentPage={pagination.page}
+            totalPages={totalPages}
+            totalItems={totalServers}
+            itemsPerPage={pagination.limit}
+            onPageChange={(page) => {
+              setPagination(prev => ({ ...prev, page }));
+              // 페이지 변경 시 스크롤을 맨 위로 이동
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          />
         </div>
       </div>
     );
@@ -1733,17 +2068,1292 @@ const RiskAssessment = () => {
         </div>
 
         {selectedIssue && (
-          <div className="risk-assessment-right">
-            <div className="vulnerability-details">
-              <div className="vulnerability-header">
-                <div className="vulnerability-title">
+          <div className={`detail-drawer ${selectedIssue ? 'is-open' : ''}`}>
+            <div 
+              className="detail-drawer__backdrop"
+              onClick={() => setSelectedIssue(null)}
+            />
+            <aside className="detail-drawer__panel" role="dialog" aria-modal="true">
+              <header className="detail-drawer__header">
                   <div>
-                    <h2>{selectedIssue.vulnerability}</h2>
-                    <span className="vulnerability-type">{selectedIssue.type} vulnerability</span>
+                  <p className="detail-drawer__eyebrow">{selectedTab === 'Tool Validation' ? 'Tool Validation' : 'Code Vulnerability'}</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    {selectedTab === 'Tool Validation' && selectedIssue.tool_name ? (() => {
+                      // 모든 취약점의 category_name 가져오기
+                      const allVulns = selectedIssue._allVulnerabilities || [];
+                      const categoryNames = [];
+                      
+                      if (allVulns.length > 0) {
+                        // 중복 제거하면서 category_name 수집
+                        const seen = new Set();
+                        allVulns.forEach(vuln => {
+                          if (vuln.category_name && !seen.has(vuln.category_name)) {
+                            seen.add(vuln.category_name);
+                            categoryNames.push({
+                              category_name: vuln.category_name,
+                              category_code: vuln.category_code
+                            });
+                          }
+                        });
+                      } else if (selectedIssue.category_name) {
+                        // _allVulnerabilities가 없으면 selectedIssue에서 가져오기
+                        categoryNames.push({
+                          category_name: selectedIssue.category_name,
+                          category_code: selectedIssue.category_code
+                        });
+                      }
+                      
+                      return categoryNames.length > 0 ? (
+                        <>
+                          <h2 className="detail-drawer__title" style={{ margin: 0 }}>
+                            {categoryNames.map((cat, idx) => (
+                              <span key={idx}>
+                                {cat.category_name}
+                                {idx < categoryNames.length - 1 && <span style={{ color: '#999', margin: '0 8px' }}>•</span>}
+                              </span>
+                            ))}
+                          </h2>
+                          {categoryNames.map((cat, idx) => (
+                            <span
+                              key={idx}
+                              style={{
+                                padding: '4px 8px',
+                                borderRadius: '4px',
+                                backgroundColor: cat.category_code === 'MCP-01' ? '#dc3545' :
+                                                 cat.category_code === 'MCP-02' ? '#fd7e14' :
+                                                 cat.category_code === 'MCP-03' ? '#ffc107' :
+                                                 cat.category_code === 'MCP-04' ? '#20c997' : '#6c757d',
+                                color: '#fff',
+                                fontSize: '0.75rem',
+                                fontWeight: 600
+                              }}
+                            >
+                              {cat.category_code}
+                            </span>
+                          ))}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setShowMcpInfoModal(true);
+                            }}
+                            style={{
+                              background: '#fff',
+                              border: '2px solid #003153',
+                              cursor: 'pointer',
+                              padding: '6px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              borderRadius: '50%',
+                              width: '24px',
+                              height: '24px',
+                              color: '#003153',
+                              fontSize: '12px',
+                              fontWeight: 700,
+                              transition: 'all 0.2s ease'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.target.style.transform = 'scale(1.1)';
+                              e.target.style.backgroundColor = '#f0f4f7';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.target.style.transform = 'scale(1)';
+                              e.target.style.backgroundColor = '#fff';
+                            }}
+                            title="MCP 취약점 카테고리 설명 보기"
+                          >
+                            i
+                          </button>
+                        </>
+                      ) : (
+                        <h2 className="detail-drawer__title">Tool Validation Issue</h2>
+                      );
+                    })() : (
+                      <h2 className="detail-drawer__title">
+                        {selectedIssue.vulnerability || 'Code Vulnerability'}
+                      </h2>
+                    )}
                   </div>
                 </div>
+                <button 
+                  className="detail-drawer__close"
+                  onClick={() => setSelectedIssue(null)}
+                  aria-label="Close"
+                >
+                  &times;
+                </button>
+              </header>
+              <div className="detail-drawer__content">
+              <div className="vulnerability-details">
+              {selectedTab === 'Tool Validation' && selectedIssue.tool_name ? (
+                // Tool Validation 상세보기 (OSS Vulnerabilities 스타일)
+                <>
+                  {/* Tool Information Section */}
+                  <section className="oss-detail-drawer__section">
+                    <h3>Tool Information</h3>
+                    <div className="oss-detail-drawer__info-grid">
+                      <div className="oss-detail-drawer__info-item">
+                        <span className="oss-detail-drawer__info-label">Tool Name</span>
+                        <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                          {selectedIssue.tool_name || '-'}
+                        </span>
               </div>
+                      {(() => {
+                        // 리포트 데이터에서 tool 설명 찾기
+                        const toolInfo = toolValidationReport?.report_data?.tools?.find(t => t.name === selectedIssue.tool_name);
+                        return toolInfo?.description ? (
+                          <div className="oss-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
+                            <span className="oss-detail-drawer__info-label">Tool Description</span>
+                            <span className="oss-detail-drawer__info-value">
+                              {toolInfo.description}
+                            </span>
+                          </div>
+                        ) : null;
+                      })()}
+                      <div className="oss-detail-drawer__info-item">
+                        <span className="oss-detail-drawer__info-label">Host</span>
+                        <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace' }}>
+                          {selectedIssue.host || '-'}
+                        </span>
+                      </div>
+                      <div className="oss-detail-drawer__info-item">
+                        <span className="oss-detail-drawer__info-label">Method</span>
+                        <span className="oss-detail-drawer__info-value">
+                          <span style={{
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            backgroundColor: selectedIssue.method === 'GET' ? '#28a745' : 
+                                           selectedIssue.method === 'POST' ? '#007bff' :
+                                           selectedIssue.method === 'PUT' ? '#ffc107' :
+                                           selectedIssue.method === 'DELETE' ? '#dc3545' : '#6c757d',
+                            color: '#fff',
+                            fontSize: '0.85rem',
+                            fontWeight: 600
+                          }}>
+                            {selectedIssue.method || '-'}
+                          </span>
+                        </span>
+                      </div>
+                      <div className="oss-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
+                        <span className="oss-detail-drawer__info-label">Path</span>
+                        <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                          {selectedIssue.path || '-'}
+                        </span>
+                      </div>
+                    </div>
+                  </section>
 
+                  {/* Vulnerabilities Section */}
+                  <section className="oss-detail-drawer__section">
+                    <h3 style={{ marginBottom: '20px' }}>Vulnerabilities ({selectedIssue._allVulnerabilities ? selectedIssue._allVulnerabilities.length : 1})</h3>
+                    {selectedIssue._allVulnerabilities ? (
+                      selectedIssue._allVulnerabilities.map((vuln, idx) => (
+                        <div key={idx} style={{ 
+                          border: '1px solid rgba(31, 34, 51, 0.08)', 
+                          borderRadius: '12px', 
+                          padding: '24px',
+                          marginBottom: '20px',
+                          backgroundColor: '#fff',
+                          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
+                          transition: 'all 0.2s ease'
+                        }}>
+                          {/* Category Header */}
+                          <div style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '12px',
+                            marginBottom: '20px',
+                            paddingBottom: '16px',
+                            borderBottom: '1px solid rgba(31, 34, 51, 0.08)'
+                          }}>
+                            <span style={{
+                              padding: '6px 12px',
+                              borderRadius: '6px',
+                              backgroundColor: vuln.category_code === 'MCP-01' ? '#dc3545' :
+                                             vuln.category_code === 'MCP-02' ? '#fd7e14' :
+                                             vuln.category_code === 'MCP-03' ? '#ffc107' :
+                                             vuln.category_code === 'MCP-04' ? '#20c997' : '#6c757d',
+                              color: '#fff',
+                              fontSize: '0.875rem',
+                              fontWeight: 700,
+                              letterSpacing: '0.02em'
+                            }}>
+                              {vuln.category_code || '-'}
+                            </span>
+                            {vuln.category_name && (
+                              <span style={{
+                                fontSize: '0.95rem',
+                                fontWeight: 600,
+                                color: '#333',
+                                flex: 1
+                              }}>
+                                {vuln.category_name}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Title */}
+                          {vuln.title && (
+                            <div style={{ marginBottom: '16px' }}>
+                              <h4 style={{ 
+                                margin: 0,
+                                fontSize: '1rem',
+                                fontWeight: 600,
+                                color: '#333',
+                                lineHeight: 1.5
+                              }}>
+                                {vuln.title}
+                              </h4>
+                            </div>
+                          )}
+
+                          {/* Description */}
+                          {vuln.description && (
+                            <div style={{ 
+                              marginBottom: '20px'
+                            }}>
+                              <div style={{
+                                fontSize: '0.875rem',
+                                lineHeight: 1.7,
+                                color: '#555',
+                                whiteSpace: 'normal',
+                                wordBreak: 'break-word'
+                              }}>
+                                {vuln.description}
+                              </div>
+                            </div>
+                          )}
+                          {/* Evidence */}
+                          {vuln.evidence && (() => {
+                            // Evidence 파싱: 동적 경로나 도구 목록 추출
+                            const evidence = vuln.evidence;
+                            
+                            // tool-API 연관성 패턴: "tool-API 연관성: ..." 또는 "[패턴 기반 탐지] tool-API 연관성: ..."
+                            const toolApiMatch = evidence.match(/(?:\[패턴 기반 탐지\]\s*)?tool-API 연관성[:\s]*(.+)/);
+                            
+                            // 동적 경로 패턴: "동적 경로 사용: POST /path, GET /path2" 또는 "동적 경로 사용: POST /repos/..."
+                            const dynamicPathMatch = evidence.match(/동적 경로 사용[:\s]*(.+)/);
+                            const weakToolMatch = evidence.match(/약한 검증 도구[:\s]*\[(.+?)\]/);
+                            
+                            // tool-API 연관성이 있는 경우
+                            if (toolApiMatch) {
+                              const associationsText = toolApiMatch[1].trim();
+                              // 연관성들을 파싱 (쉼표로 구분)
+                              const associations = associationsText.split(',').map(a => a.trim()).filter(a => a);
+                              
+                              // 각 연관성을 파싱: "tool.param → METHOD /path"
+                              const parsedAssociations = associations.map(assoc => {
+                                const match = assoc.match(/^([^\s→]+)\s*→\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(.+)$/i);
+                                if (match) {
+                                  return {
+                                    toolParam: match[1].trim(),
+                                    method: match[2].toUpperCase(),
+                                    path: match[3].trim()
+                                  };
+                                }
+                                return null;
+                              }).filter(a => a !== null);
+                              
+                              if (parsedAssociations.length > 0) {
+                                // tool별로 그룹화
+                                const groupedByTool = {};
+                                parsedAssociations.forEach(assoc => {
+                                  const toolName = assoc.toolParam.split('.')[0];
+                                  if (!groupedByTool[toolName]) {
+                                    groupedByTool[toolName] = [];
+                                  }
+                                  groupedByTool[toolName].push(assoc);
+                                });
+                                
+                                return (
+                                  <div style={{ marginBottom: '20px' }}>
+                                    <div style={{
+                                      fontSize: '0.875rem',
+                                      fontWeight: 600,
+                                      color: '#333',
+                                      marginBottom: '12px'
+                                    }}>
+                                      Evidence: tool-API 연관성 ({parsedAssociations.length}개)
+                                    </div>
+                                    <div style={{
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '16px',
+                                      maxHeight: '400px',
+                                      overflowY: 'auto',
+                                      padding: '12px',
+                                      backgroundColor: '#fff',
+                                      borderRadius: '8px',
+                                      border: '1px solid rgba(31, 34, 51, 0.12)'
+                                    }}>
+                                      {Object.entries(groupedByTool).map(([toolName, toolAssocs]) => (
+                                        <div key={toolName} style={{
+                                          backgroundColor: '#fff',
+                                          borderRadius: '8px',
+                                          border: '1px solid rgba(31, 34, 51, 0.08)',
+                                          overflow: 'hidden'
+                                        }}>
+                                          <div style={{
+                                            padding: '10px 14px',
+                                            backgroundColor: '#f0f4f8',
+                                            borderBottom: '1px solid rgba(31, 34, 51, 0.08)',
+                                            fontSize: '0.875rem',
+                                            fontWeight: 600,
+                                            color: '#333',
+                                            fontFamily: 'monospace'
+                                          }}>
+                                            {toolName}
+                                          </div>
+                                          <div style={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '8px',
+                                            padding: '12px'
+                                          }}>
+                                            {toolAssocs.map((assoc, assocIdx) => (
+                                              <div key={assocIdx} style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '12px',
+                                                padding: '10px 12px',
+                                                backgroundColor: '#fafbfc',
+                                                borderRadius: '6px',
+                                                border: '1px solid rgba(31, 34, 51, 0.06)',
+                                                transition: 'all 0.15s ease'
+                                              }}
+                                              onMouseEnter={(e) => {
+                                                e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.12)';
+                                                e.currentTarget.style.backgroundColor = '#fff';
+                                              }}
+                                              onMouseLeave={(e) => {
+                                                e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.06)';
+                                                e.currentTarget.style.backgroundColor = '#fafbfc';
+                                              }}>
+                                                <span style={{
+                                                  padding: '4px 10px',
+                                                  backgroundColor: '#e3e8ef',
+                                                  borderRadius: '4px',
+                                                  fontSize: '0.75rem',
+                                                  fontWeight: 500,
+                                                  color: '#4a5568',
+                                                  fontFamily: 'monospace',
+                                                  whiteSpace: 'nowrap'
+                                                }}>
+                                                  {assoc.toolParam.split('.').slice(1).join('.') || 'param'}
+                                                </span>
+                                                <span style={{ color: '#999', fontSize: '0.875rem' }}>→</span>
+                                                <span style={{
+                                                  padding: '5px 10px',
+                                                  borderRadius: '5px',
+                                                  backgroundColor: assoc.method === 'GET' ? '#28a745' : 
+                                                                 assoc.method === 'POST' ? '#007bff' :
+                                                                 assoc.method === 'PUT' ? '#ffc107' :
+                                                                 assoc.method === 'DELETE' ? '#dc3545' : '#6c757d',
+                                                  color: '#fff',
+                                                  fontSize: '0.75rem',
+                                                  fontWeight: 700,
+                                                  whiteSpace: 'nowrap',
+                                                  minWidth: '65px',
+                                                  textAlign: 'center',
+                                                  letterSpacing: '0.02em'
+                                                }}>
+                                                  {assoc.method}
+                                                </span>
+                                                <span style={{ 
+                                                  flex: 1, 
+                                                  wordBreak: 'break-all',
+                                                  color: '#333',
+                                                  lineHeight: 1.5,
+                                                  fontFamily: 'monospace',
+                                                  fontSize: '0.875rem'
+                                                }}>
+                                                  {assoc.path}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              }
+                            }
+                            
+                            // 동적 경로가 있는 경우
+                            if (dynamicPathMatch) {
+                              const pathsText = dynamicPathMatch[1].trim();
+                              // 경로들을 파싱 (쉼표나 줄바꿈으로 구분)
+                              const paths = pathsText.split(/[,\n]/).map(p => p.trim()).filter(p => p);
+                              
+                              return (
+                                <div style={{ marginBottom: '20px' }}>
+                                  <div style={{
+                                    fontSize: '0.875rem',
+                                    fontWeight: 600,
+                                    color: '#333',
+                                    marginBottom: '12px'
+                                  }}>
+                                    Evidence: 동적 경로 사용 ({paths.length}개)
+                                  </div>
+                                  <div style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '10px',
+                                    maxHeight: '350px',
+                                    overflowY: 'auto',
+                                    padding: '12px',
+                                    backgroundColor: '#fff',
+                                    borderRadius: '8px',
+                                    border: '1px solid rgba(31, 34, 51, 0.12)'
+                                  }}>
+                                    {paths.map((path, pathIdx) => {
+                                      // HTTP 메서드와 경로 분리
+                                      const methodMatch = path.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(.+)$/i);
+                                      const method = methodMatch ? methodMatch[1].toUpperCase() : null;
+                                      const pathOnly = methodMatch ? methodMatch[2] : path;
+                                      
+                                      return (
+                                        <div key={pathIdx} style={{
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: '12px',
+                                          padding: '12px 14px',
+                                          backgroundColor: '#fff',
+                                          borderRadius: '6px',
+                                          border: '1px solid rgba(31, 34, 51, 0.08)',
+                                          fontFamily: 'monospace',
+                                          fontSize: '0.875rem',
+                                          transition: 'all 0.15s ease'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.15)';
+                                          e.currentTarget.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.05)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.08)';
+                                          e.currentTarget.style.boxShadow = 'none';
+                                        }}>
+                                          {method && (
+                                            <span style={{
+                                              padding: '5px 10px',
+                                              borderRadius: '5px',
+                                              backgroundColor: method === 'GET' ? '#28a745' : 
+                                                             method === 'POST' ? '#007bff' :
+                                                             method === 'PUT' ? '#ffc107' :
+                                                             method === 'DELETE' ? '#dc3545' : '#6c757d',
+                                              color: '#fff',
+                                              fontSize: '0.75rem',
+                                              fontWeight: 700,
+                                              whiteSpace: 'nowrap',
+                                              minWidth: '65px',
+                                              textAlign: 'center',
+                                              letterSpacing: '0.02em'
+                                            }}>
+                                              {method}
+                                            </span>
+                                          )}
+                                          <span style={{ 
+                                            flex: 1, 
+                                            wordBreak: 'break-all',
+                                            color: '#333',
+                                            lineHeight: 1.5
+                                          }}>
+                                            {pathOnly}
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            
+                            // 약한 검증 도구가 있는 경우
+                            if (weakToolMatch) {
+                              const toolsText = weakToolMatch[1];
+                              const tools = toolsText.split(',').map(t => t.trim().replace(/['"]/g, '')).filter(t => t);
+                              
+                              return (
+                                <div style={{ marginBottom: '20px' }}>
+                                  <div style={{
+                                    fontSize: '0.875rem',
+                                    fontWeight: 600,
+                                    color: '#333',
+                                    marginBottom: '12px'
+                                  }}>
+                                    Evidence: 약한 검증 도구 ({tools.length}개)
+                                  </div>
+                                  <div style={{
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    gap: '10px',
+                                    padding: '12px',
+                                    backgroundColor: '#fff',
+                                    borderRadius: '8px',
+                                    border: '1px solid rgba(31, 34, 51, 0.12)'
+                                  }}>
+                                    {tools.map((tool, toolIdx) => (
+                                      <span key={toolIdx} style={{
+                                        padding: '8px 14px',
+                                        backgroundColor: '#fff',
+                                        borderRadius: '6px',
+                                        border: '1px solid rgba(31, 34, 51, 0.08)',
+                                        fontFamily: 'monospace',
+                                        fontSize: '0.875rem',
+                                        color: '#333',
+                                        fontWeight: 500,
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.15)';
+                                        e.currentTarget.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.05)';
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.08)';
+                                        e.currentTarget.style.boxShadow = 'none';
+                                      }}>
+                                        {tool}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            
+                            // 일반 텍스트인 경우 - 구조화된 패턴 파싱 시도
+                            // "수정/삭제 작업: PATCH/PUT: 1개" 같은 패턴
+                            const workPatternMatch = evidence.match(/수정\/삭제 작업:\s*([^:]+):\s*(\d+)개/);
+                            
+                            if (workPatternMatch) {
+                              const methods = workPatternMatch[1].trim();
+                              const count = workPatternMatch[2];
+                              
+                              return (
+                                <div style={{ marginBottom: '20px' }}>
+                                  <div style={{
+                                    fontSize: '0.875rem',
+                                    fontWeight: 600,
+                                    color: '#333',
+                                    marginBottom: '12px'
+                                  }}>
+                                    Evidence
+                                  </div>
+                                  <div style={{
+                                    padding: '12px',
+                                    backgroundColor: '#fff',
+                                    borderRadius: '8px',
+                                    border: '1px solid rgba(31, 34, 51, 0.12)'
+                                  }}>
+                                    <div style={{
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '12px'
+                                    }}>
+                                      <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '12px'
+                                      }}>
+                                        <span style={{
+                                          fontSize: '0.875rem',
+                                          fontWeight: 600,
+                                          color: '#666',
+                                          minWidth: '100px'
+                                        }}>
+                                          작업 유형:
+                                        </span>
+                                        <span style={{
+                                          fontSize: '0.875rem',
+                                          color: '#333'
+                                        }}>
+                                          수정/삭제 작업
+                                        </span>
+                                      </div>
+                                      <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '12px',
+                                        flexWrap: 'wrap'
+                                      }}>
+                                        <span style={{
+                                          fontSize: '0.875rem',
+                                          fontWeight: 600,
+                                          color: '#666',
+                                          minWidth: '100px'
+                                        }}>
+                                          HTTP 메서드:
+                                        </span>
+                                        <div style={{
+                                          display: 'flex',
+                                          gap: '8px',
+                                          flexWrap: 'wrap'
+                                        }}>
+                                          {methods.split('/').map((method, idx) => (
+                                            <span key={idx} style={{
+                                              padding: '5px 10px',
+                                              borderRadius: '5px',
+                                              backgroundColor: method.trim() === 'GET' ? '#28a745' : 
+                                                             method.trim() === 'POST' ? '#007bff' :
+                                                             method.trim() === 'PUT' ? '#ffc107' :
+                                                             method.trim() === 'PATCH' ? '#6c757d' :
+                                                             method.trim() === 'DELETE' ? '#dc3545' : '#6c757d',
+                                              color: '#fff',
+                                              fontSize: '0.75rem',
+                                              fontWeight: 700,
+                                              whiteSpace: 'nowrap',
+                                              letterSpacing: '0.02em'
+                                            }}>
+                                              {method.trim()}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                      <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '12px'
+                                      }}>
+                                        <span style={{
+                                          fontSize: '0.875rem',
+                                          fontWeight: 600,
+                                          color: '#666',
+                                          minWidth: '100px'
+                                        }}>
+                                          개수:
+                                        </span>
+                                        <span style={{
+                                          fontSize: '0.875rem',
+                                          color: '#333',
+                                          fontWeight: 600
+                                        }}>
+                                          {count}개
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            
+                            // 일반 텍스트인 경우 (파싱 실패)
+                            return (
+                              <div style={{ marginBottom: '20px' }}>
+                                <div style={{
+                                  fontSize: '0.875rem',
+                                  fontWeight: 600,
+                                  color: '#333',
+                                  marginBottom: '12px'
+                                }}>
+                                  Evidence
+                                </div>
+                                <div style={{
+                                  padding: '16px',
+                                  backgroundColor: '#fff',
+                                  borderRadius: '8px',
+                                  border: '1px solid rgba(31, 34, 51, 0.12)',
+                                  fontFamily: 'monospace',
+                                  fontSize: '0.875rem',
+                                  lineHeight: 1.7,
+                                  color: '#333',
+                                  whiteSpace: 'pre-wrap',
+                                  wordBreak: 'break-word'
+                                }}>
+                                  {vuln.evidence}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* Recommendation */}
+                          {vuln.recommendation && (
+                            <div style={{ 
+                              marginTop: '20px',
+                              paddingTop: '20px',
+                              borderTop: '1px solid rgba(31, 34, 51, 0.08)'
+                            }}>
+                              <div style={{
+                                fontSize: '0.875rem',
+                                fontWeight: 600,
+                                color: '#333',
+                                marginBottom: '12px'
+                              }}>
+                                Recommendation
+                              </div>
+                              <div style={{
+                                fontSize: '0.875rem',
+                                lineHeight: 1.7,
+                                color: '#2e7d32',
+                                whiteSpace: 'normal',
+                                wordBreak: 'break-word'
+                              }}>
+                                {vuln.recommendation}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ 
+                        border: '1px solid rgba(31, 34, 51, 0.08)', 
+                        borderRadius: '12px', 
+                        padding: '24px',
+                        backgroundColor: '#fff',
+                        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)'
+                      }}>
+                        {/* Category Header */}
+                        <div style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '12px',
+                          marginBottom: '20px',
+                          paddingBottom: '16px',
+                          borderBottom: '1px solid rgba(31, 34, 51, 0.08)'
+                        }}>
+                          {selectedIssue.category_code && (
+                            <span style={{
+                              padding: '6px 12px',
+                              borderRadius: '6px',
+                              backgroundColor: selectedIssue.category_code === 'MCP-01' ? '#dc3545' :
+                                             selectedIssue.category_code === 'MCP-02' ? '#fd7e14' :
+                                             selectedIssue.category_code === 'MCP-03' ? '#ffc107' :
+                                             selectedIssue.category_code === 'MCP-04' ? '#20c997' : '#6c757d',
+                              color: '#fff',
+                              fontSize: '0.875rem',
+                              fontWeight: 700,
+                              letterSpacing: '0.02em'
+                            }}>
+                              {selectedIssue.category_code}
+                            </span>
+                          )}
+                          {selectedIssue.category_name && (
+                            <span style={{
+                              fontSize: '0.95rem',
+                              fontWeight: 600,
+                              color: '#333',
+                              flex: 1
+                            }}>
+                              {selectedIssue.category_name}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Title */}
+                        {selectedIssue.title && (
+                          <div style={{ marginBottom: '16px' }}>
+                            <h4 style={{ 
+                              margin: 0,
+                              fontSize: '1rem',
+                              fontWeight: 600,
+                              color: '#333',
+                              lineHeight: 1.5
+                            }}>
+                              {selectedIssue.title}
+                            </h4>
+                          </div>
+                        )}
+
+                        {/* Description */}
+                        {selectedIssue.description && (
+                          <div style={{ 
+                            marginBottom: '20px'
+                          }}>
+                            <div style={{
+                              fontSize: '0.875rem',
+                              lineHeight: 1.7,
+                              color: '#555',
+                              whiteSpace: 'normal',
+                              wordBreak: 'break-word'
+                            }}>
+                              {selectedIssue.description}
+                            </div>
+                          </div>
+                        )}
+                        {/* Evidence */}
+                        {selectedIssue.evidence && (() => {
+                            // Evidence 파싱: 동적 경로나 도구 목록 추출
+                            const evidence = selectedIssue.evidence;
+                            
+                            // tool-API 연관성 패턴: "tool-API 연관성: ..." 또는 "[패턴 기반 탐지] tool-API 연관성: ..."
+                            const toolApiMatch = evidence.match(/(?:\[패턴 기반 탐지\]\s*)?tool-API 연관성[:\s]*(.+)/);
+                            
+                            // 동적 경로 패턴: "동적 경로 사용: POST /path, GET /path2" 또는 "동적 경로 사용: POST /repos/..."
+                            const dynamicPathMatch = evidence.match(/동적 경로 사용[:\s]*(.+)/);
+                            const weakToolMatch = evidence.match(/약한 검증 도구[:\s]*\[(.+?)\]/);
+                            
+                            // tool-API 연관성이 있는 경우
+                            if (toolApiMatch) {
+                              const associationsText = toolApiMatch[1].trim();
+                              // 연관성들을 파싱 (쉼표로 구분)
+                              const associations = associationsText.split(',').map(a => a.trim()).filter(a => a);
+                              
+                              // 각 연관성을 파싱: "tool.param → METHOD /path"
+                              const parsedAssociations = associations.map(assoc => {
+                                const match = assoc.match(/^([^\s→]+)\s*→\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(.+)$/i);
+                                if (match) {
+                                  return {
+                                    toolParam: match[1].trim(),
+                                    method: match[2].toUpperCase(),
+                                    path: match[3].trim()
+                                  };
+                                }
+                                return null;
+                              }).filter(a => a !== null);
+                              
+                              if (parsedAssociations.length > 0) {
+                                // tool별로 그룹화
+                                const groupedByTool = {};
+                                parsedAssociations.forEach(assoc => {
+                                  const toolName = assoc.toolParam.split('.')[0];
+                                  if (!groupedByTool[toolName]) {
+                                    groupedByTool[toolName] = [];
+                                  }
+                                  groupedByTool[toolName].push(assoc);
+                                });
+                                
+                                return (
+                                  <div style={{ marginBottom: '20px' }}>
+                                    <div style={{
+                                      fontSize: '0.875rem',
+                                      fontWeight: 600,
+                                      color: '#333',
+                                      marginBottom: '12px'
+                                    }}>
+                                      Evidence: tool-API 연관성 ({parsedAssociations.length}개)
+                                    </div>
+                                    <div style={{
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '16px',
+                                      maxHeight: '400px',
+                                      overflowY: 'auto',
+                                      padding: '12px',
+                                      backgroundColor: '#fff',
+                                      borderRadius: '8px',
+                                      border: '1px solid rgba(31, 34, 51, 0.12)'
+                                    }}>
+                                      {Object.entries(groupedByTool).map(([toolName, toolAssocs]) => (
+                                        <div key={toolName} style={{
+                                          backgroundColor: '#fff',
+                                          borderRadius: '8px',
+                                          border: '1px solid rgba(31, 34, 51, 0.08)',
+                                          overflow: 'hidden'
+                                        }}>
+                                          <div style={{
+                                            padding: '10px 14px',
+                                            backgroundColor: '#f0f4f8',
+                                            borderBottom: '1px solid rgba(31, 34, 51, 0.08)',
+                                            fontSize: '0.875rem',
+                                            fontWeight: 600,
+                                            color: '#333',
+                                            fontFamily: 'monospace'
+                                          }}>
+                                            {toolName}
+                                          </div>
+                                          <div style={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '8px',
+                                            padding: '12px'
+                                          }}>
+                                            {toolAssocs.map((assoc, assocIdx) => (
+                                              <div key={assocIdx} style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '12px',
+                                                padding: '10px 12px',
+                                                backgroundColor: '#fafbfc',
+                                                borderRadius: '6px',
+                                                border: '1px solid rgba(31, 34, 51, 0.06)',
+                                                transition: 'all 0.15s ease'
+                                              }}
+                                              onMouseEnter={(e) => {
+                                                e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.12)';
+                                                e.currentTarget.style.backgroundColor = '#fff';
+                                              }}
+                                              onMouseLeave={(e) => {
+                                                e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.06)';
+                                                e.currentTarget.style.backgroundColor = '#fafbfc';
+                                              }}>
+                                                <span style={{
+                                                  padding: '4px 10px',
+                                                  backgroundColor: '#e3e8ef',
+                                                  borderRadius: '4px',
+                                                  fontSize: '0.75rem',
+                                                  fontWeight: 500,
+                                                  color: '#4a5568',
+                                                  fontFamily: 'monospace',
+                                                  whiteSpace: 'nowrap'
+                                                }}>
+                                                  {assoc.toolParam.split('.').slice(1).join('.') || 'param'}
+                                                </span>
+                                                <span style={{ color: '#999', fontSize: '0.875rem' }}>→</span>
+                                                <span style={{
+                                                  padding: '5px 10px',
+                                                  borderRadius: '5px',
+                                                  backgroundColor: assoc.method === 'GET' ? '#28a745' : 
+                                                                 assoc.method === 'POST' ? '#007bff' :
+                                                                 assoc.method === 'PUT' ? '#ffc107' :
+                                                                 assoc.method === 'DELETE' ? '#dc3545' : '#6c757d',
+                                                  color: '#fff',
+                                                  fontSize: '0.75rem',
+                                                  fontWeight: 700,
+                                                  whiteSpace: 'nowrap',
+                                                  minWidth: '65px',
+                                                  textAlign: 'center',
+                                                  letterSpacing: '0.02em'
+                                                }}>
+                                                  {assoc.method}
+                                                </span>
+                                                <span style={{ 
+                                                  flex: 1, 
+                                                  wordBreak: 'break-all',
+                                                  color: '#333',
+                                                  lineHeight: 1.5,
+                                                  fontFamily: 'monospace',
+                                                  fontSize: '0.875rem'
+                                                }}>
+                                                  {assoc.path}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              }
+                            }
+                            
+                            // 동적 경로가 있는 경우
+                            if (dynamicPathMatch) {
+                              const pathsText = dynamicPathMatch[1].trim();
+                              // 경로들을 파싱 (쉼표나 줄바꿈으로 구분)
+                              const paths = pathsText.split(/[,\n]/).map(p => p.trim()).filter(p => p);
+                              
+                              return (
+                                <div style={{ marginBottom: '20px' }}>
+                                  <div style={{
+                                    fontSize: '0.875rem',
+                                    fontWeight: 600,
+                                    color: '#333',
+                                    marginBottom: '12px'
+                                  }}>
+                                    Evidence: 동적 경로 사용 ({paths.length}개)
+                                  </div>
+                                  <div style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '10px',
+                                    maxHeight: '350px',
+                                    overflowY: 'auto',
+                                    padding: '12px',
+                                    backgroundColor: '#fff',
+                                    borderRadius: '8px',
+                                    border: '1px solid rgba(31, 34, 51, 0.12)'
+                                  }}>
+                                    {paths.map((path, pathIdx) => {
+                                      // HTTP 메서드와 경로 분리
+                                      const methodMatch = path.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(.+)$/i);
+                                      const method = methodMatch ? methodMatch[1].toUpperCase() : null;
+                                      const pathOnly = methodMatch ? methodMatch[2] : path;
+                                      
+                                      return (
+                                        <div key={pathIdx} style={{
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: '12px',
+                                          padding: '12px 14px',
+                                          backgroundColor: '#fff',
+                                          borderRadius: '6px',
+                                          border: '1px solid rgba(31, 34, 51, 0.08)',
+                                          fontFamily: 'monospace',
+                                          fontSize: '0.875rem',
+                                          transition: 'all 0.15s ease'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.15)';
+                                          e.currentTarget.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.05)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.08)';
+                                          e.currentTarget.style.boxShadow = 'none';
+                                        }}>
+                                          {method && (
+                                            <span style={{
+                                              padding: '5px 10px',
+                                              borderRadius: '5px',
+                                              backgroundColor: method === 'GET' ? '#28a745' : 
+                                                             method === 'POST' ? '#007bff' :
+                                                             method === 'PUT' ? '#ffc107' :
+                                                             method === 'DELETE' ? '#dc3545' : '#6c757d',
+                                              color: '#fff',
+                                              fontSize: '0.75rem',
+                                              fontWeight: 700,
+                                              whiteSpace: 'nowrap',
+                                              minWidth: '65px',
+                                              textAlign: 'center',
+                                              letterSpacing: '0.02em'
+                                            }}>
+                                              {method}
+                                            </span>
+                                          )}
+                                          <span style={{ 
+                                            flex: 1, 
+                                            wordBreak: 'break-all',
+                                            color: '#333',
+                                            lineHeight: 1.5
+                                          }}>
+                                            {pathOnly}
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            
+                            // 약한 검증 도구가 있는 경우
+                            if (weakToolMatch) {
+                              const toolsText = weakToolMatch[1];
+                              const tools = toolsText.split(',').map(t => t.trim().replace(/['"]/g, '')).filter(t => t);
+                              
+                              return (
+                                <div style={{ marginBottom: '20px' }}>
+                                  <div style={{
+                                    fontSize: '0.875rem',
+                                    fontWeight: 600,
+                                    color: '#333',
+                                    marginBottom: '12px'
+                                  }}>
+                                    Evidence: 약한 검증 도구 ({tools.length}개)
+                                  </div>
+                                  <div style={{
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    gap: '10px',
+                                    padding: '12px',
+                                    backgroundColor: '#fff',
+                                    borderRadius: '8px',
+                                    border: '1px solid rgba(31, 34, 51, 0.12)'
+                                  }}>
+                                    {tools.map((tool, toolIdx) => (
+                                      <span key={toolIdx} style={{
+                                        padding: '8px 14px',
+                                        backgroundColor: '#fff',
+                                        borderRadius: '6px',
+                                        border: '1px solid rgba(31, 34, 51, 0.08)',
+                                        fontFamily: 'monospace',
+                                        fontSize: '0.875rem',
+                                        color: '#333',
+                                        fontWeight: 500,
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.15)';
+                                        e.currentTarget.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.05)';
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.currentTarget.style.borderColor = 'rgba(31, 34, 51, 0.08)';
+                                        e.currentTarget.style.boxShadow = 'none';
+                                      }}>
+                                        {tool}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            
+                            // 일반 텍스트인 경우 - 구조화된 패턴 파싱 시도
+                            // "수정/삭제 작업: PATCH/PUT: 1개" 같은 패턴
+                            const workPatternMatch = evidence.match(/수정\/삭제 작업:\s*([^:]+):\s*(\d+)개/);
+                            
+                            if (workPatternMatch) {
+                              const methods = workPatternMatch[1].trim();
+                              const count = workPatternMatch[2];
+                              
+                              return (
+                                <div style={{ marginBottom: '20px' }}>
+                                  <div style={{
+                                    fontSize: '0.875rem',
+                                    fontWeight: 600,
+                                    color: '#333',
+                                    marginBottom: '12px'
+                                  }}>
+                                    Evidence
+                                  </div>
+                                  <div style={{
+                                    padding: '12px',
+                                    backgroundColor: '#fff',
+                                    borderRadius: '8px',
+                                    border: '1px solid rgba(31, 34, 51, 0.12)'
+                                  }}>
+                                    <div style={{
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '12px'
+                                    }}>
+                                      <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '12px'
+                                      }}>
+                                        <span style={{
+                                          fontSize: '0.875rem',
+                                          fontWeight: 600,
+                                          color: '#666',
+                                          minWidth: '100px'
+                                        }}>
+                                          작업 유형:
+                                        </span>
+                                        <span style={{
+                                          fontSize: '0.875rem',
+                                          color: '#333'
+                                        }}>
+                                          수정/삭제 작업
+                                        </span>
+                                      </div>
+                                      <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '12px',
+                                        flexWrap: 'wrap'
+                                      }}>
+                                        <span style={{
+                                          fontSize: '0.875rem',
+                                          fontWeight: 600,
+                                          color: '#666',
+                                          minWidth: '100px'
+                                        }}>
+                                          HTTP 메서드:
+                                        </span>
+                                        <div style={{
+                                          display: 'flex',
+                                          gap: '8px',
+                                          flexWrap: 'wrap'
+                                        }}>
+                                          {methods.split('/').map((method, idx) => (
+                                            <span key={idx} style={{
+                                              padding: '5px 10px',
+                                              borderRadius: '5px',
+                                              backgroundColor: method.trim() === 'GET' ? '#28a745' : 
+                                                             method.trim() === 'POST' ? '#007bff' :
+                                                             method.trim() === 'PUT' ? '#ffc107' :
+                                                             method.trim() === 'PATCH' ? '#6c757d' :
+                                                             method.trim() === 'DELETE' ? '#dc3545' : '#6c757d',
+                                              color: '#fff',
+                                              fontSize: '0.75rem',
+                                              fontWeight: 700,
+                                              whiteSpace: 'nowrap',
+                                              letterSpacing: '0.02em'
+                                            }}>
+                                              {method.trim()}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                      <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '12px'
+                                      }}>
+                                        <span style={{
+                                          fontSize: '0.875rem',
+                                          fontWeight: 600,
+                                          color: '#666',
+                                          minWidth: '100px'
+                                        }}>
+                                          개수:
+                                        </span>
+                                        <span style={{
+                                          fontSize: '0.875rem',
+                                          color: '#333',
+                                          fontWeight: 600
+                                        }}>
+                                          {count}개
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            
+                            // 일반 텍스트인 경우 (파싱 실패)
+                            return (
+                              <div style={{ marginBottom: '20px' }}>
+                                <div style={{
+                                  fontSize: '0.875rem',
+                                  fontWeight: 600,
+                                  color: '#333',
+                                  marginBottom: '12px'
+                                }}>
+                                  Evidence
+                                </div>
+                                <div style={{
+                                  fontSize: '0.875rem',
+                                  lineHeight: 1.7,
+                                  color: '#333',
+                                  whiteSpace: 'pre-wrap',
+                                  wordBreak: 'break-word',
+                                  fontFamily: 'monospace'
+                                }}>
+                                  {selectedIssue.evidence}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                        {/* Recommendation */}
+                        {selectedIssue.recommendation && (
+                          <div style={{ 
+                            marginTop: '20px',
+                            paddingTop: '20px',
+                            borderTop: '1px solid rgba(31, 34, 51, 0.08)'
+                          }}>
+                            <div style={{
+                              fontSize: '0.875rem',
+                              fontWeight: 600,
+                              color: '#666',
+                              marginBottom: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px'
+                            }}>
+                              <span style={{ 
+                                width: '4px',
+                                height: '4px',
+                                borderRadius: '50%',
+                                backgroundColor: '#28a745',
+                                display: 'inline-block'
+                              }}></span>
+                              Recommendation
+                            </div>
+                            <div style={{
+                              padding: '16px',
+                              backgroundColor: '#e8f5e9',
+                              borderRadius: '8px',
+                              border: '1px solid rgba(40, 167, 69, 0.2)',
+                              fontSize: '0.875rem',
+                              lineHeight: 1.7,
+                              color: '#2e7d32',
+                              whiteSpace: 'normal',
+                              wordBreak: 'break-word'
+                            }}>
+                              {selectedIssue.recommendation}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                </>
+              ) : (
+                // Code Vulnerabilities 상세보기 (기존)
+                <>
               <div className="vulnerability-info">
                 <div className="info-section" style={{ flexWrap: 'wrap', gap: '16px' }}>
                   <div className="severity-box" style={{ 
@@ -1816,8 +3426,6 @@ const RiskAssessment = () => {
                       <code>{selectedIssue.language}</code>
                     </div>
                   )}
-                </div>
-
               </div>
 
               {selectedIssue.rawFinding && (
@@ -1842,6 +3450,11 @@ const RiskAssessment = () => {
                 </div>
               )}
             </div>
+                </>
+              )}
+              </div>
+              </div>
+              </aside>
           </div>
         )}
 
@@ -1996,9 +3609,26 @@ const RiskAssessment = () => {
                       <div className="oss-detail-drawer__description-info">
                         <div className="oss-detail-drawer__info-item oss-detail-drawer__info-item--description">
                           <span className="oss-detail-drawer__info-label">Description</span>
-                          <span className="oss-detail-drawer__info-value">
+                          <div 
+                            className="oss-detail-drawer__info-value" 
+                            style={{ 
+                              width: '100%', 
+                              display: 'block', 
+                              wordWrap: 'break-word', 
+                              overflowWrap: 'break-word',
+                              whiteSpace: 'normal',
+                              overflow: 'visible',
+                              overflowX: 'visible',
+                              overflowY: 'visible',
+                              maxWidth: 'none',
+                              minWidth: 0,
+                              boxSizing: 'border-box',
+                              textOverflow: 'clip',
+                              wordBreak: 'break-word'
+                            }}
+                          >
                             {finalText}
-                          </span>
+                          </div>
                         </div>
       </div>
     );
@@ -2225,9 +3855,166 @@ const RiskAssessment = () => {
                   </div>
                 </section>
               </div>
-            </aside>
+              </aside>
+            </div>
+          )}
+
+      {/* MCP 취약점 카테고리 설명 모달 */}
+      {showMcpInfoModal && (
+        <div 
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 3000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0, 0, 0, 0.5)'
+          }}
+          onClick={() => setShowMcpInfoModal(false)}
+        >
+          <div 
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: '12px',
+              padding: '32px',
+              maxWidth: '800px',
+              width: '90%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 700, color: '#333' }}>MCP AI Agent Tool Risk</h2>
+              <button
+                onClick={() => setShowMcpInfoModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '28px',
+                  cursor: 'pointer',
+                  color: '#666',
+                  padding: '0',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '6px',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#f0f0f0';
+                  e.target.style.color = '#333';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = 'transparent';
+                  e.target.style.color = '#666';
+                }}
+              >
+                &times;
+              </button>
+            </div>
+            
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* MCP-01 */}
+              <div style={{ border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px', backgroundColor: '#fff' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                  <span style={{
+                    padding: '6px 12px',
+                    borderRadius: '4px',
+                    backgroundColor: '#dc3545',
+                    color: '#fff',
+                    fontSize: '0.875rem',
+                    fontWeight: 600
+                  }}>
+                    MCP-01
+                  </span>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: '#333' }}>AI Tool Selection Risk</h3>
+                </div>
+                <div>
+                  <strong style={{ color: '#666', fontSize: '14px' }}>설명:</strong>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '14px', lineHeight: '1.6', color: '#666' }}>
+                    위험한 작업(delete, remove, destroy 등)을 수행하는 도구가 일반 도구와 섞여 있고, 경고 문구가 없는 경우 잘못된 도구를 선택할 위험이 있습니다.
+                  </p>
+                </div>
+              </div>
+
+              {/* MCP-02 */}
+              <div style={{ border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px', backgroundColor: '#fff' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                  <span style={{
+                    padding: '6px 12px',
+                    borderRadius: '4px',
+                    backgroundColor: '#fd7e14',
+                    color: '#fff',
+                    fontSize: '0.875rem',
+                    fontWeight: 600
+                  }}>
+                    MCP-02
+                  </span>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: '#333' }}>Context Injection Risk</h3>
+                </div>
+                <div>
+                  <strong style={{ color: '#666', fontSize: '14px' }}>설명:</strong>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '14px', lineHeight: '1.6', color: '#666' }}>
+                    사용자 입력이 검증 없이 API 경로나 파라미터로 직접 사용될 경우 보안 위험이 발생할 수 있습니다.
+                  </p>
+                </div>
+              </div>
+
+              {/* MCP-03 */}
+              <div style={{ border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px', backgroundColor: '#fff' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                  <span style={{
+                    padding: '6px 12px',
+                    borderRadius: '4px',
+                    backgroundColor: '#ffc107',
+                    color: '#fff',
+                    fontSize: '0.875rem',
+                    fontWeight: 600
+                  }}>
+                    MCP-03
+                  </span>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: '#333' }}>Autonomous Execution Risk</h3>
+                </div>
+                <div>
+                  <strong style={{ color: '#666', fontSize: '14px' }}>설명:</strong>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '14px', lineHeight: '1.6', color: '#666' }}>
+                    사용자 확인 없이 수정/삭제 작업(DELETE, PATCH, PUT)을 수행할 수 있는 API가 많은 경우 위험합니다.
+                  </p>
+                </div>
+              </div>
+
+              {/* MCP-04 */}
+              <div style={{ border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px', backgroundColor: '#fff' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                  <span style={{
+                    padding: '6px 12px',
+                    borderRadius: '4px',
+                    backgroundColor: '#20c997',
+                    color: '#fff',
+                    fontSize: '0.875rem',
+                    fontWeight: 600
+                  }}>
+                    MCP-04
+                  </span>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: '#333' }}>Tool Combination Risk</h3>
+                </div>
+                <div>
+                  <strong style={{ color: '#666', fontSize: '14px' }}>설명:</strong>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '14px', lineHeight: '1.6', color: '#666' }}>
+                    정보를 읽는 도구와 수정/삭제하는 도구가 함께 제공될 경우, 정보 수집 후 악용할 위험이 있습니다.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
-        )}
+        </div>
+      )}
       </div>
     );
   };

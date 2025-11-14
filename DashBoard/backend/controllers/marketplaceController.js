@@ -108,28 +108,114 @@ const marketplaceController = {
       // 페이징 적용
       servers = servers.slice(offset, offset + limitNum);
       
-      // 각 서버의 최신 분석 시간 조회
+      // 각 서버의 최신 분석 시간 및 통계 조회
       const list = servers.map(({ id, name, description, short_description, status, github_link, file_path, analysis_timestamp: existing_timestamp }) => {
         // 이미 analysis_timestamp가 있으면 사용, 없으면 code_vulnerabilities에서 조회
         let analysis_timestamp = existing_timestamp || null;
         const scanPath = github_link || file_path;
         
-        // analysis_timestamp가 없고 scanPath가 있으면 code_vulnerabilities에서 조회
-        if (!analysis_timestamp && scanPath) {
+        // 패키지 개수 및 코드 취약점 개수 초기화
+        let package_count = 0;
+        let code_vulnerability_count = 0;
+        
+        // scanPath가 있으면 통계 조회
+        if (scanPath) {
           try {
-            // 최신 scan_timestamp 조회
-            const latestScan = db.prepare(`
-              SELECT MAX(scan_timestamp) as latest_timestamp 
-              FROM code_vulnerabilities 
-              WHERE scan_path = ?
-            `).get(scanPath);
+            // 서버 이름 추출 (매칭용)
+            const pathParts = scanPath.split('/');
+            const serverName = pathParts.length > 0 ? pathParts[pathParts.length - 1].replace(/\.git$/, '') : '';
             
-            if (latestScan && latestScan.latest_timestamp) {
-              analysis_timestamp = latestScan.latest_timestamp;
+            // 정확한 매칭 먼저 시도
+            try {
+              // 코드 취약점 개수 조회 (정확한 매칭)
+              const codeVulnStmt = db.prepare(`
+                SELECT COUNT(*) as count
+                FROM code_vulnerabilities
+                WHERE scan_path = ?
+              `);
+              const codeVulnCount = codeVulnStmt.get(scanPath);
+              
+              if (codeVulnCount && codeVulnCount.count > 0) {
+                code_vulnerability_count = codeVulnCount.count;
+                
+                // 최신 scan_timestamp 조회
+                const latestScanStmt = db.prepare(`
+                  SELECT MAX(scan_timestamp) as latest_timestamp 
+                  FROM code_vulnerabilities 
+                  WHERE scan_path = ?
+                `);
+                const latestScan = latestScanStmt.get(scanPath);
+                if (latestScan && latestScan.latest_timestamp) {
+                  analysis_timestamp = latestScan.latest_timestamp;
+                }
+              }
+              
+              // 패키지 개수 조회 (정확한 매칭)
+              const packageStmt = db.prepare(`
+                SELECT COUNT(DISTINCT package_name) as count
+                FROM oss_vulnerabilities
+                WHERE scan_path = ?
+                  AND package_name IS NOT NULL 
+                  AND package_name != ''
+              `);
+              const packageCount = packageStmt.get(scanPath);
+              
+              if (packageCount && packageCount.count > 0) {
+                package_count = packageCount.count;
+              }
+            } catch (exactError) {
+              // 정확한 매칭 실패 시 무시
+            }
+            
+            // 정확한 매칭이 실패하면 부분 매칭 시도
+            if (code_vulnerability_count === 0 && package_count === 0 && serverName) {
+              try {
+                // 서버 이름으로 부분 매칭
+                const likePattern = `%${serverName}%`;
+                
+                // 코드 취약점 개수 조회
+                const codeVulnStmt = db.prepare(`
+                  SELECT COUNT(*) as count
+                  FROM code_vulnerabilities
+                  WHERE scan_path LIKE ?
+                `);
+                const codeVulnCount = codeVulnStmt.get(likePattern);
+                
+                if (codeVulnCount && codeVulnCount.count > 0) {
+                  code_vulnerability_count = codeVulnCount.count;
+                  
+                  // 최신 scan_timestamp 조회
+                  const latestScanStmt = db.prepare(`
+                    SELECT MAX(scan_timestamp) as latest_timestamp 
+                    FROM code_vulnerabilities 
+                    WHERE scan_path LIKE ?
+                  `);
+                  const latestScan = latestScanStmt.get(likePattern);
+                  if (latestScan && latestScan.latest_timestamp) {
+                    analysis_timestamp = latestScan.latest_timestamp;
+                  }
+                }
+                
+                // 패키지 개수 조회
+                const packageStmt = db.prepare(`
+                  SELECT COUNT(DISTINCT package_name) as count
+                  FROM oss_vulnerabilities
+                  WHERE scan_path LIKE ?
+                    AND package_name IS NOT NULL 
+                    AND package_name != ''
+                `);
+                const packageCount = packageStmt.get(likePattern);
+                
+                if (packageCount && packageCount.count > 0) {
+                  package_count = packageCount.count;
+                }
+              } catch (likeError) {
+                // 부분 매칭 실패 시 무시
+              }
             }
           } catch (e) {
             // 조회 실패 시 무시
-            console.error('분석 시간 조회 실패:', e);
+            console.error('통계 조회 실패:', e.message);
           }
         }
         
@@ -141,7 +227,9 @@ const marketplaceController = {
           status, // status 필드 추가
           github_link, // GitHub 링크 추가
           file_path: file_path || null, // 파일 경로 추가
-          analysis_timestamp: analysis_timestamp || null // 분석 시간 추가
+          analysis_timestamp: analysis_timestamp || null, // 분석 시간 추가
+          package_count: package_count || 0, // 패키지 개수
+          code_vulnerability_count: code_vulnerability_count || 0 // 코드 취약점 개수
         };
       });
       
@@ -704,6 +792,80 @@ const marketplaceController = {
           branch: null,
           method: 'none'
         }
+      });
+    }
+  },
+
+  // 등록 요청 삭제 (관리자 또는 요청자 본인)
+  deleteMcpRequest: (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.id || null;
+      
+      // 요청 정보 조회
+      const request = mcpRequestModel.findById(id);
+      if (!request) {
+        return res.status(404).json({
+          success: false,
+          message: '등록 요청을 찾을 수 없습니다.'
+        });
+      }
+      
+      // 권한 확인: 관리자이거나 요청자 본인만 삭제 가능
+      // req.user.roles는 배열이거나 객체일 수 있음
+      let isAdmin = false;
+      if (req.user?.roles) {
+        if (Array.isArray(req.user.roles)) {
+          isAdmin = req.user.roles.some(role => 
+            (typeof role === 'string' && role === 'admin') || 
+            (typeof role === 'object' && role.name === 'admin')
+          );
+        } else if (req.user.roles === 'admin' || req.user.role === 'admin') {
+          isAdmin = true;
+        }
+      }
+      // role 필드도 확인 (하위 호환성)
+      if (!isAdmin && (req.user?.role === 'admin')) {
+        isAdmin = true;
+      }
+      const isOwner = userId && request.requested_by === userId;
+      
+      if (!isAdmin && !isOwner) {
+        return res.status(403).json({
+          success: false,
+          message: '삭제 권한이 없습니다. 관리자이거나 요청자 본인만 삭제할 수 있습니다.'
+        });
+      }
+      
+      // 승인된 요청인 경우 관련 MCP 서버도 삭제할지 확인
+      if (request.status === 'approved') {
+        const db = require('../config/db');
+        const relatedServer = db.prepare('SELECT id FROM mcp_servers WHERE name = ? AND status = ?').get(request.name, 'approved');
+        if (relatedServer) {
+          // 관련 서버도 함께 삭제
+          mcpServerModel.delete(relatedServer.id);
+        }
+      }
+      
+      // 등록 요청 삭제
+      const result = mcpRequestModel.delete(id);
+      
+      if (result.changes === 0) {
+        return res.status(404).json({
+          success: false,
+          message: '등록 요청을 찾을 수 없습니다.'
+        });
+      }
+      
+      res.json({
+        success: true,
+        message: '등록 요청이 삭제되었습니다.'
+      });
+    } catch (error) {
+      console.error('등록 요청 삭제 오류:', error);
+      res.status(500).json({
+        success: false,
+        message: '등록 요청 삭제 중 오류가 발생했습니다.'
       });
     }
   },

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import select
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
@@ -25,7 +26,7 @@ class HarnessReport:
 
 
 class MCPClient:
-    def __init__(self, process, timeout: float = 5.0):
+    def __init__(self, process, timeout: float = 30.0):  # 타임아웃을 5초에서 30초로 증가
         self.process = process
         self.timeout = timeout
         self._next_id = 1
@@ -64,15 +65,39 @@ class MCPClient:
             "method": method,
             "params": params,
         }
+        
+        # 프로세스가 종료되었는지 확인
+        if self.process.poll() is not None:
+            exit_code = self.process.poll()
+            raise RuntimeError(f"MCP 서버 프로세스가 종료되었습니다 (종료 코드: {exit_code})")
+        
         self._send_json(message)
-        while True:
+        
+        # 최대 10번 재시도 (다른 응답이 올 수 있음)
+        max_attempts = 10
+        attempts = 0
+        while attempts < max_attempts:
             response = self._read_json()
             if response is None:
-                raise TimeoutError(f"응답을 받지 못했습니다: {method}")
+                attempts += 1
+                if attempts >= max_attempts:
+                    raise TimeoutError(f"응답을 받지 못했습니다: {method} (타임아웃: {self.timeout}초)")
+                continue
             if response.get("id") == request_id:
                 if "error" in response:
-                    raise RuntimeError(response["error"].get("message", "알 수 없는 오류"))
+                    error_info = response["error"]
+                    error_code = error_info.get("code", "unknown")
+                    error_message = error_info.get("message", "알 수 없는 오류")
+                    error_data = error_info.get("data", "")
+                    full_error = f"JSON-RPC 오류 (코드: {error_code}): {error_message}"
+                    if error_data:
+                        full_error += f" | 데이터: {error_data}"
+                    raise RuntimeError(full_error)
                 return response.get("result", {})
+            # 다른 요청의 응답이면 계속 대기
+            attempts += 1
+        
+        raise TimeoutError(f"응답을 받지 못했습니다: {method} (최대 재시도 횟수 초과)")
 
     def _send_json(self, payload: Dict[str, Any]) -> None:
         data = json.dumps(payload, ensure_ascii=False)
@@ -268,7 +293,9 @@ def run_builtin_harness(
     try:
         client.initialize()
     except Exception as exc:
-        return HarnessReport(tools=[], calls=[ToolCallResult(name="initialize", success=False, error=str(exc))])
+        error_msg = str(exc)
+        print(f"❌ initialize 실패: {error_msg}", file=sys.stderr)
+        return HarnessReport(tools=[], calls=[ToolCallResult(name="initialize", success=False, error=error_msg)])
 
     try:
         if predefined_tools:
@@ -276,7 +303,13 @@ def run_builtin_harness(
         else:
             tools = client.list_tools()
     except Exception as exc:
-        return HarnessReport(tools=[], calls=[ToolCallResult(name="tools/list", success=False, error=str(exc))])
+        error_msg = str(exc)
+        print(f"❌ tools/list 실패: {error_msg}", file=sys.stderr)
+        # 프로세스 상태 확인
+        if process.poll() is not None:
+            exit_code = process.poll()
+            error_msg += f" (MCP 서버 프로세스 종료 코드: {exit_code})"
+        return HarnessReport(tools=[], calls=[ToolCallResult(name="tools/list", success=False, error=error_msg)])
 
     tool_list = tools if max_tools == 0 else tools[:max_tools]
     

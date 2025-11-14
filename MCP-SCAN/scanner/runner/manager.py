@@ -376,7 +376,7 @@ class MCPScannerManager:
     
     def __init__(self, temp_dir: Optional[str] = None, verbose: bool = False):
         self.verbose = verbose
-        self.work_dir = Path(temp_dir) if temp_dir else Path("artifacts/temp")
+        self.work_dir = Path(temp_dir) if temp_dir else Path("output/temp")
         self.console = Console()
 
         self._cleanup_temp_dir()
@@ -583,7 +583,7 @@ class MCPScannerManager:
         exclude_dirs = {
             '.git', 'node_modules', 'vendor', '__pycache__', '.venv', 
             'venv', 'dist', 'build', '.next', 'target', '.gradle',
-            'artifacts', 'temp', 'tmp', '.idea', '.vscode'
+            'output', 'temp', 'tmp', '.idea', '.vscode'
         }
         
         text_extensions = {
@@ -641,7 +641,7 @@ class MCPScannerManager:
             exclude_dirs = {
                 '.git', 'node_modules', 'vendor', '__pycache__', '.venv', 
                 'venv', 'dist', 'build', '.next', 'target', '.gradle',
-                'artifacts', 'temp', 'tmp', '.idea', '.vscode'
+                'output', 'temp', 'tmp', '.idea', '.vscode'
             }
             
             # Get all text files (exclude binary files)

@@ -382,6 +382,218 @@ const userController = {
         message: '직책 목록을 불러오는 중 오류가 발생했습니다.'
       });
     }
+  },
+
+  // API 키 조회 (현재 로그인한 사용자)
+  getMyApiKeys: (req, res) => {
+    try {
+      const userId = req.user.id;
+      const { mcp_server_name } = req.query;
+      
+      let query = 'SELECT * FROM api_keys WHERE user_id = ?';
+      const params = [userId];
+      
+      if (mcp_server_name) {
+        query += ' AND mcp_server_name = ?';
+        params.push(mcp_server_name);
+      }
+      
+      query += ' ORDER BY mcp_server_name, field_name';
+      
+      const apiKeys = db.prepare(query).all(...params);
+      
+      // 보안을 위해 field_value는 마스킹하여 반환 (앞 4자만 표시)
+      const maskedKeys = apiKeys.map(key => ({
+        ...key,
+        field_value: key.field_value ? 
+          (key.field_value.length > 4 ? 
+            key.field_value.slice(0, 4) + '*'.repeat(Math.max(0, key.field_value.length - 4)) : 
+            key.field_value) : 
+          ''
+      }));
+      
+      res.json({
+        success: true,
+        data: maskedKeys
+      });
+    } catch (error) {
+      console.error('API 키 조회 오류:', error);
+      res.status(500).json({
+        success: false,
+        message: 'API 키 조회 중 오류가 발생했습니다.'
+      });
+    }
+  },
+
+  // API 키 생성
+  createApiKey: (req, res) => {
+    try {
+      const userId = req.user.id;
+      const { mcp_server_name, field_name, field_value } = req.body;
+      
+      // 필수 필드 검증
+      if (!mcp_server_name || !field_name || !field_value) {
+        return res.status(400).json({
+          success: false,
+          message: 'MCP 서버 이름, 필드명, 필드값은 필수입니다.'
+        });
+      }
+      
+      // 중복 확인
+      const existing = db.prepare(`
+        SELECT id FROM api_keys 
+        WHERE user_id = ? AND mcp_server_name = ? AND field_name = ?
+      `).get(userId, mcp_server_name, field_name);
+      
+      if (existing) {
+        return res.status(400).json({
+          success: false,
+          message: '이미 등록된 필드명입니다.'
+        });
+      }
+      
+      // API 키 생성
+      const stmt = db.prepare(`
+        INSERT INTO api_keys (user_id, mcp_server_name, field_name, field_value, field_description, auth_type)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      
+      const result = stmt.run(
+        userId,
+        mcp_server_name,
+        field_name,
+        field_value,
+        null, // field_description
+        'Key/Token 인증' // auth_type 기본값
+      );
+      
+      res.json({
+        success: true,
+        message: 'API 키가 등록되었습니다.',
+        data: {
+          id: result.lastInsertRowid,
+          mcp_server_name,
+          field_name
+        }
+      });
+    } catch (error) {
+      console.error('API 키 생성 오류:', error);
+      res.status(500).json({
+        success: false,
+        message: 'API 키 등록 중 오류가 발생했습니다.'
+      });
+    }
+  },
+
+  // API 키 수정
+  updateApiKey: (req, res) => {
+    try {
+      const userId = req.user.id;
+      const { id } = req.params;
+      const { field_name, field_value } = req.body;
+      
+      // API 키 소유권 확인
+      const existing = db.prepare(`
+        SELECT id FROM api_keys WHERE id = ? AND user_id = ?
+      `).get(id, userId);
+      
+      if (!existing) {
+        return res.status(404).json({
+          success: false,
+          message: 'API 키를 찾을 수 없거나 권한이 없습니다.'
+        });
+      }
+      
+      // 업데이트할 필드 구성
+      const updates = [];
+      const params = [];
+      
+      if (field_name !== undefined) {
+        // 필드명 변경 시 중복 확인
+        const duplicate = db.prepare(`
+          SELECT id FROM api_keys 
+          WHERE user_id = ? AND mcp_server_name = (SELECT mcp_server_name FROM api_keys WHERE id = ?) 
+          AND field_name = ? AND id != ?
+        `).get(userId, id, field_name, id);
+        
+        if (duplicate) {
+          return res.status(400).json({
+            success: false,
+            message: '이미 등록된 필드명입니다.'
+          });
+        }
+        updates.push('field_name = ?');
+        params.push(field_name);
+      }
+      
+      if (field_value !== undefined) {
+        updates.push('field_value = ?');
+        params.push(field_value);
+      }
+      
+      if (updates.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: '수정할 필드가 없습니다.'
+        });
+      }
+      
+      updates.push('updated_at = datetime("now", "+9 hours")');
+      params.push(id);
+      
+      const stmt = db.prepare(`
+        UPDATE api_keys 
+        SET ${updates.join(', ')}
+        WHERE id = ? AND user_id = ?
+      `);
+      
+      stmt.run(...params, userId);
+      
+      res.json({
+        success: true,
+        message: 'API 키가 수정되었습니다.'
+      });
+    } catch (error) {
+      console.error('API 키 수정 오류:', error);
+      res.status(500).json({
+        success: false,
+        message: 'API 키 수정 중 오류가 발생했습니다.'
+      });
+    }
+  },
+
+  // API 키 삭제
+  deleteApiKey: (req, res) => {
+    try {
+      const userId = req.user.id;
+      const { id } = req.params;
+      
+      // API 키 소유권 확인
+      const existing = db.prepare(`
+        SELECT id FROM api_keys WHERE id = ? AND user_id = ?
+      `).get(id, userId);
+      
+      if (!existing) {
+        return res.status(404).json({
+          success: false,
+          message: 'API 키를 찾을 수 없거나 권한이 없습니다.'
+        });
+      }
+      
+      const stmt = db.prepare('DELETE FROM api_keys WHERE id = ? AND user_id = ?');
+      stmt.run(id, userId);
+      
+      res.json({
+        success: true,
+        message: 'API 키가 삭제되었습니다.'
+      });
+    } catch (error) {
+      console.error('API 키 삭제 오류:', error);
+      res.status(500).json({
+        success: false,
+        message: 'API 키 삭제 중 오류가 발생했습니다.'
+      });
+    }
   }
 };
 

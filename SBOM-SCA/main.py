@@ -1479,7 +1479,25 @@ Examples:
     
     # Create output directory
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # 볼륨 마운트로 인해 stat()이 실패할 수 있으므로, mkdir 대신 직접 파일 쓰기로 권한 확인
+    # Path.mkdir()은 내부에서 is_dir()을 체크할 때 stat()이 실패하므로 os.makedirs 사용
+    import os
+    try:
+        os.makedirs(str(output_dir), exist_ok=True)
+    except (PermissionError, OSError):
+        # 디렉토리 생성 실패 (이미 존재하거나 권한 문제)
+        # stat() 실패는 무시하고 계속 진행
+        pass
+    
+    # 실제 파일 쓰기로 권한 확인
+    test_file = output_dir / '.write_test'
+    try:
+        test_file.write_text('test')
+        test_file.unlink()
+    except (PermissionError, OSError) as e:
+        print(f"Error: Cannot write to output directory: {e}")
+        print(f"Output directory: {output_dir}")
+        sys.exit(1)
     
     # Extract repository name
     repo_name = github_url.split('/')[-1].replace('.git', '')
