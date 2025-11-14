@@ -8,7 +8,7 @@ import UserManagement from './pages/UserManagement';
 import RequestBoard from './pages/RequestBoard';
 import DownloadLogs from './pages/DownloadLogs';
 import RiskAssessment from './pages/RiskAssessment';
-import Dlp from './pages/Dlp';
+import AnomalyDetection from './pages/AnomalyDetection';
 import MCPRegistry from './pages/MCPRegistry';
 import MCPRegistryDetail from './pages/MCPRegistry/MCPRegistryDetail';
 import ServerRequest from './pages/ServerRequest/ServerRequest';
@@ -81,7 +81,7 @@ function Sidebar() {
     { path: '/server-request', label: 'Server Request', icon: requestServerIcon, adminOnly: false },
     { path: '/request-board', label: 'Register Board', icon: registerBoardIcon, adminOnly: false },
     { path: '/risk-assessment', label: 'Risk Assessment', icon: riskAssessmentIcon, adminOnly: true },
-    { path: '/dlp', label: 'DLP', icon: dlpIcon, adminOnly: true },
+    { path: '/anomaly-detection', label: 'Anomaly Detection', icon: dlpIcon, adminOnly: true },
     { path: '/download-logs', label: 'Download Logs', icon: downloadLogsIcon, adminOnly: true }
   ];
 
@@ -264,7 +264,7 @@ function App() {
               <Route path="/risk-assessment" element={<ProtectedRoute><RiskAssessment /></ProtectedRoute>} />
               <Route path="/sbom-sca" element={<Navigate to="/risk-assessment" replace />} />
               <Route path="/scanner" element={<Navigate to="/risk-assessment" replace />} />
-              <Route path="/dlp" element={<ProtectedRoute><Dlp /></ProtectedRoute>} />
+              <Route path="/anomaly-detection" element={<ProtectedRoute><AnomalyDetection /></ProtectedRoute>} />
               <Route path="/marketplace" element={<ProtectedRoute><MCPRegistry /></ProtectedRoute>} />
               <Route path="/marketplace/:id" element={<ProtectedRoute><MCPRegistryDetail /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />

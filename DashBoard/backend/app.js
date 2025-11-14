@@ -3,6 +3,8 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 const errorHandler = require('./middleware/errorHandler');
 
+dotenv.config();
+
 // Initialize Database (테이블 자동 생성)
 require('./config/db');
 
@@ -15,16 +17,19 @@ const dlpRoutes = require('./routes/dlp');
 const mcpRoutes = require('./routes/mcp');
 const dashboardRoutes = require('./routes/dashboard');
 const riskAssessmentRoutes = require('./routes/riskAssessment');
+const permissionViolationRoutes = require('./routes/permissionViolation');
 const debugRoutes = require('./routes/debug'); // 개발용
 const dbTablesRoutes = require('./routes/dbTables'); // DB 테이블 조회
-
-dotenv.config();
-
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: '*', // 모든 origin 허용 (프로덕션에서는 특정 도메인으로 제한)
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-MCP-Proxy-Request', 'X-Original-Client-IP', 'X-Forwarded-For']
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -41,7 +46,9 @@ app.use('/api/dlp', dlpRoutes);
 app.use('/api/mcp', mcpRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/risk-assessment', riskAssessmentRoutes);
+app.use('/api/permission-violation', permissionViolationRoutes);
 console.log('[Server] Risk Assessment 라우트 등록됨: /api/risk-assessment');
+console.log('[Server] Permission Violation 라우트 등록됨: /api/permission-violation');
 app.use('/api/debug', debugRoutes); // 개발용: DB 확인 (프로덕션에서는 제거 권장)
 app.use('/api/db-tables', dbTablesRoutes); // DB 테이블 조회
 
