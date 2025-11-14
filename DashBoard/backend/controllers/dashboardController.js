@@ -527,8 +527,9 @@ const dashboardController = {
         WHERE status = 'approved' AND connection_snippet IS NOT NULL AND connection_snippet != ''
       `).get();
 
-      // DLP 위반 로그는 현재 mcp_server_id와 직접 연결되어 있지 않음
-      // 따라서 위험한 서버 수를 계산할 수 없으므로 0으로 설정
+      // DLP 위반 로그에는 mcp_server_id 컬럼이 없으므로, 
+      // source_ip나 다른 방법으로 연결하거나 통계에서 제외
+      // 현재는 DLP 위반이 있는 서버 수를 0으로 설정 (또는 다른 로직으로 계산)
       const withRisks = { count: 0 };
 
       const withIssues = db.prepare(`

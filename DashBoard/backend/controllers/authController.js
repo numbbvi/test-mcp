@@ -91,55 +91,88 @@ const authController = {
     });
   },
 
-  register: (req, res) => {
-    const { username, password, email } = req.body;
+  register: async (req, res) => {
+    try {
+      const { username, password, email, employee_id, team, position } = req.body;
 
-    // 필수 필드 검증
-    if (!username || !password || !email) {
-      return res.status(400).json({
-        success: false,
-        message: '모든 필드를 입력해주세요.'
-      });
-    }
-
-    // 중복 사용자 확인
-    const existingUser = users.find(u => u.username === username || u.email === email);
-    if (existingUser) {
-      return res.status(409).json({
-        success: false,
-        message: '이미 존재하는 사용자명 또는 이메일입니다.'
-      });
-    }
-
-    // 비밀번호 길이 검증
-    if (password.length < 4) {
-      return res.status(400).json({
-        success: false,
-        message: '비밀번호는 최소 4자 이상이어야 합니다.'
-      });
-    }
-
-    // 새 사용자 생성 (일반 사용자로 자동 설정)
-    const newUser = {
-      id: users.length + 1,
-      username,
-      password, // 추후 암호화 필요
-      email,
-      role: 'user' // 기본값은 일반 사용자
-    };
-
-    users.push(newUser);
-
-    res.json({
-      success: true,
-      message: '회원가입이 완료되었습니다.',
-      user: {
-        id: newUser.id,
-        username: newUser.username,
-        email: newUser.email,
-        role: newUser.role
+      // 필수 필드 검증
+      if (!username || !password || !email || !employee_id) {
+        return res.status(400).json({
+          success: false,
+          message: '사용자명, 사원번호, 이메일, 비밀번호를 모두 입력해주세요.'
+        });
       }
-    });
+
+      // 중복 사용자 확인
+      const existingUserByUsername = userModel.findByUsername(username);
+      const existingUserByEmail = userModel.findByEmail(email);
+      const existingUserByEmployeeId = userModel.findByEmployeeId(employee_id);
+
+      if (existingUserByUsername) {
+        return res.status(409).json({
+          success: false,
+          message: '이미 존재하는 사용자명입니다.'
+        });
+      }
+
+      if (existingUserByEmail) {
+        return res.status(409).json({
+          success: false,
+          message: '이미 존재하는 이메일입니다.'
+        });
+      }
+
+      if (existingUserByEmployeeId) {
+        return res.status(409).json({
+          success: false,
+          message: '이미 존재하는 사원번호입니다.'
+        });
+      }
+
+      // 비밀번호 길이 검증
+      if (password.length < 4) {
+        return res.status(400).json({
+          success: false,
+          message: '비밀번호는 최소 4자 이상이어야 합니다.'
+        });
+      }
+
+      // 새 사용자 생성
+      const newUser = userModel.create(
+        username,
+        employee_id,
+        email,
+        password,
+        team || null,
+        position || null
+      );
+
+      // 기본 역할 할당 (user 역할)
+      const db = require('../config/db');
+      const userRole = db.prepare('SELECT id FROM roles WHERE name = ?').get('user');
+      if (userRole) {
+        userModel.assignRole(newUser.id, userRole.id);
+      }
+
+      res.json({
+        success: true,
+        message: '회원가입이 완료되었습니다.',
+        user: {
+          id: newUser.id,
+          username: newUser.username,
+          employee_id: newUser.employee_id,
+          email: newUser.email,
+          team: newUser.team,
+          position: newUser.position
+        }
+      });
+    } catch (error) {
+      console.error('회원가입 오류:', error);
+      res.status(500).json({
+        success: false,
+        message: '회원가입 중 오류가 발생했습니다.'
+      });
+    }
   }
 };
 

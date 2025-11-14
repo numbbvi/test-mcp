@@ -170,6 +170,11 @@ const migrateTables = () => {
           db.exec(`ALTER TABLE mcp_register_requests ADD COLUMN scanned INTEGER DEFAULT 0`);
           console.log('MCP Register Requests 테이블: scanned 컬럼 추가 완료');
         }
+        // auth_token 컬럼 추가
+        if (!requestColumnNames.includes('auth_token')) {
+          db.exec(`ALTER TABLE mcp_register_requests ADD COLUMN auth_token TEXT`);
+          console.log('MCP Register Requests 테이블: auth_token 컬럼 추가 완료');
+        }
       }
     } catch (requestError) {
       console.error('MCP Register Requests 테이블 마이그레이션 오류:', requestError);
@@ -607,6 +612,31 @@ const initializeTables = () => {
       masked_text TEXT,
       original_json TEXT,
       FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (handled_by) REFERENCES users(id)
+    )
+  `);
+
+  // Permission Violation Logs 테이블 (권한 위반 추적)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS permission_violation_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      username TEXT,
+      employee_id TEXT,
+      source_ip TEXT NOT NULL,
+      mcp_server_id INTEGER,
+      mcp_server_name TEXT,
+      tool_name TEXT NOT NULL,
+      violation_type TEXT NOT NULL,
+      reason TEXT,
+      severity TEXT DEFAULT 'medium',
+      timestamp DATETIME DEFAULT (datetime('now', '+9 hours')),
+      status TEXT DEFAULT 'pending',
+      handled_by INTEGER,
+      handled_at DATETIME,
+      notes TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id),
       FOREIGN KEY (handled_by) REFERENCES users(id)
     )
   `);

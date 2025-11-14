@@ -1,6 +1,8 @@
 const db = require('../config/db');
 const { getUserByIP } = require('../utils/userByIP');
 const { extractClientIP, isLocalIP } = require('../middleware/clientIP');
+const slackNotifier = require('../services/slackNotifier');
+const permissionViolationEmitter = require('./permissionViolationController').emitter;
 
 /**
  * Tool 접근 권한 확인
@@ -49,17 +51,17 @@ const checkPermission = (req, res) => {
     const clientIP = req.clientIP || extractClientIP(req);
     console.log('📍 추출된 클라이언트 IP:', clientIP);
 
-    // 로컬 IP 필터링 (선택적)
-    if (isLocalIP(clientIP)) {
-      console.warn(`Local IP detected: ${clientIP}, skipping user lookup`);
-      // 로컬 IP는 기본적으로 허용하지 않음 (또는 특별 처리)
-      return res.json({
-        success: true,
-        allowed: false,
-        reason: '로컬 IP는 사용자 인증이 필요합니다.',
-        client_ip: clientIP
-      });
-    }
+    // 로컬 IP 필터링 (선택적) - IP 기반 권한 추적 테스트를 위해 주석 처리
+    // if (isLocalIP(clientIP)) {
+    //   console.warn(`Local IP detected: ${clientIP}, skipping user lookup`);
+    //   // 로컬 IP는 기본적으로 허용하지 않음 (또는 특별 처리)
+    //   return res.json({
+    //     success: true,
+    //     allowed: false,
+    //     reason: '로컬 IP는 사용자 인증이 필요합니다.',
+    //     client_ip: clientIP
+    //   });
+    // }
 
     // IP 기반 사용자 조회
     const user = getUserByIP(clientIP);
@@ -79,6 +81,76 @@ const checkPermission = (req, res) => {
     // 권한 체크
     const result = checkToolPermission(user, tool_name, mcp_server_id);
     console.log('✅ 권한 체크 결과:', { allowed: result.allowed, reason: result.reason });
+
+    // 권한이 거부된 경우 로그 저장
+    if (!result.allowed) {
+      try {
+        // MCP 서버 정보 조회
+        const mcpServer = db.prepare('SELECT id, name FROM mcp_servers WHERE id = ?').get(mcp_server_id);
+        
+        // 위반 유형 결정
+        let violationType = 'unauthorized_access';
+        if (result.reason?.includes('팀')) {
+          violationType = 'team_restriction';
+        } else if (result.reason?.includes('Tool')) {
+          violationType = 'tool_restriction';
+        } else if (result.reason?.includes('서버')) {
+          violationType = 'server_restriction';
+        }
+
+        // 권한 위반 로그 저장
+        const insertLog = db.prepare(`
+          INSERT INTO permission_violation_logs 
+          (user_id, username, employee_id, source_ip, mcp_server_id, mcp_server_name, tool_name, violation_type, reason, severity)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        
+        insertLog.run(
+          user.id,
+          user.username,
+          user.employee_id,
+          clientIP,
+          mcp_server_id,
+          mcpServer?.name || null,
+          tool_name,
+          violationType,
+          result.reason || '권한이 없습니다.',
+          'high' // 권한 위반은 높은 심각도
+        );
+        
+        const savedLog = {
+          id: insertLog.lastInsertRowid,
+          user_id: user.id,
+          username: user.username,
+          employee_id: user.employee_id,
+          source_ip: clientIP,
+          mcp_server_id: mcp_server_id,
+          mcp_server_name: mcpServer?.name || null,
+          tool_name: tool_name,
+          violation_type: violationType,
+          reason: result.reason || '권한이 없습니다.',
+          severity: 'high',
+          timestamp: new Date().toISOString(),
+          status: 'pending'
+        };
+
+        console.log('🚨 권한 위반 로그 저장 완료:', {
+          user: user.username,
+          tool: tool_name,
+          server: mcpServer?.name,
+          reason: result.reason
+        });
+
+        // SSE로 새로운 로그 알림 전송
+        permissionViolationEmitter.emit('newLog', savedLog);
+
+        // Slack 알림 전송 (비동기)
+        slackNotifier.notifyPermissionViolation(savedLog);
+      } catch (logError) {
+        console.error('권한 위반 로그 저장 실패:', logError);
+        // 로그 저장 실패해도 응답은 정상 반환
+      }
+    }
 
     const response = {
       success: true,

@@ -4,6 +4,7 @@ const db = require('../config/db');
 const { scanGitHubForTools } = require('../utils/githubToolScanner');
 const { scanToolsFromRequest, getToolsFromSshServer, getToolsFromMcpServer } = require('../utils/mcpToolScanner');
 const { scanToolsFromSandbox } = require('../utils/mcpSandboxScanner');
+const { registerServerToRegistry } = require('../utils/registryManager');
 
 const marketplaceController = {
   // MCP 서버 목록 조회 (팀별 필터링, 페이징, status 필터링)
@@ -11,12 +12,26 @@ const marketplaceController = {
   getMcpServers: (req, res) => {
     try {
       // 쿼리 파라미터에서 사용자 팀 정보 받기
-      const userTeam = req.query.team || null;
+      let userTeam = req.query.team || null;
       const status = req.query.status || null; // 'all', 'pending', 'approved' 등
       const { page = 1, limit = 12 } = req.query;
       const pageNum = parseInt(page);
       const limitNum = parseInt(limit);
       const offset = (pageNum - 1) * limitNum;
+
+      // admin 체크: req.user가 있고 admin 역할이면 팀 필터 무시
+      let isAdmin = false;
+      if (req.user) {
+        const userRoles = req.user.roles || [];
+        isAdmin = Array.isArray(userRoles) 
+          ? userRoles.includes('admin') 
+          : userRoles === 'admin' || req.user.role === 'admin';
+      }
+      
+      // admin이면 팀 필터 무시
+      if (isAdmin) {
+        userTeam = null;
+      }
       
       let servers = [];
       let total;
@@ -29,8 +44,8 @@ const marketplaceController = {
       
       // 1. mcp_servers 테이블에서 서버 조회
       let approvedServers = [];
-      if (userTeam) {
-        // 특정 팀이 접근 가능한 서버만 조회
+      if (userTeam && !isAdmin) {
+        // 특정 팀이 접근 가능한 서버만 조회 (admin이 아닌 경우만)
         let teamServers = mcpServerModel.findByTeam(userTeam);
         
         // status 필터링 적용
@@ -39,7 +54,7 @@ const marketplaceController = {
         }
         approvedServers = teamServers;
       } else {
-        // 팀 정보가 없으면 모든 서버 조회 (관리자 등)
+        // 팀 정보가 없거나 admin이면 모든 서버 조회
         approvedServers = mcpServerModel.findAll(statusFilter);
       }
       
@@ -66,7 +81,7 @@ const marketplaceController = {
       // mcp_servers 추가
       approvedServers.forEach(server => {
         serverMap.set(server.name, {
-          id: `server_${server.id}`,
+          id: server.id, // 실제 숫자 ID 사용
           name: server.name,
           description: server.description,
           short_description: server.short_description,
@@ -82,7 +97,7 @@ const marketplaceController = {
       registerRequests.forEach(request => {
         if (!serverMap.has(request.name)) {
           serverMap.set(request.name, {
-            id: `request_${request.id}`,
+            id: `request_${request.id}`, // 요청은 접두사 유지 (구분용)
             name: request.name,
             description: request.description,
             short_description: null,
@@ -265,14 +280,20 @@ const marketplaceController = {
         });
       }
       
+      // 모든 필요한 필드 포함
       res.json({
         success: true,
         data: {
           id: server.id.toString(),
-          title: server.name,
-          description: server.description,
-          connectionSnippet: server.connection_snippet,
-          file_path: server.file_path
+          name: server.name,
+          title: server.name, // 하위 호환성
+          description: server.description || '',
+          short_description: server.short_description || server.description || '',
+          connectionSnippet: server.connection_snippet || '',
+          connection_snippet: server.connection_snippet || '',
+          file_path: server.file_path || null,
+          github_link: server.github_link || null,
+          status: server.status || 'approved'
         }
       });
     } catch (error) {
@@ -332,13 +353,16 @@ const marketplaceController = {
       }
       
       // 서버 이름 중복 체크 (mcp_servers와 mcp_register_requests 모두 확인)
+      // 단, 거부된(rejected) 요청은 제외
       const trimmedName = name.trim();
       const existingServer = db.prepare(`
-        SELECT name FROM mcp_servers WHERE name = ?
+        SELECT name FROM mcp_servers WHERE name = ? AND status = 'approved'
       `).get(trimmedName);
-      
+
+      // pending 또는 approved 상태의 요청만 중복 체크 (rejected는 제외)
       const existingRequest = db.prepare(`
-        SELECT name FROM mcp_register_requests WHERE name = ?
+        SELECT name FROM mcp_register_requests 
+        WHERE name = ? AND status IN ('pending', 'approved')
       `).get(trimmedName);
       
       if (existingServer || existingRequest) {
@@ -357,8 +381,9 @@ const marketplaceController = {
       const requestedBy = parseInt(user_id);
       const title = name; // 제목은 이름과 동일하게 설정
       const connectionSnippet = connection || null;
+      const authToken = req.body.auth_token || null; // auth_token 추가
       
-      const request = mcpRequestModel.create(title, name, description, connectionSnippet, github, filePath, requestedBy, 'normal', imagePath);
+      const request = mcpRequestModel.create(title, name, description, connectionSnippet, github, filePath, requestedBy, 'normal', imagePath, authToken);
       
       res.json({
         success: true,
@@ -511,7 +536,7 @@ const marketplaceController = {
   },
 
   // 등록 요청 승인/거부 (관리자용)
-  reviewRequest: (req, res) => {
+  reviewRequest: async (req, res) => {
     try {
       const { id } = req.params;
       const { status, review_comment, server_description } = req.body; // status: 'approved' or 'rejected'
@@ -559,6 +584,26 @@ const marketplaceController = {
             }
           }
           
+          // 중앙 레지스트리에 git clone 및 connection_config 생성
+          let connectionConfig = null;
+          let serverType = 'local'; // 기본값
+          
+          if (request.github_link) {
+            try {
+              console.log(`📦 승인된 서버를 중앙 레지스트리에 등록 시작: ${request.name}`);
+              connectionConfig = await registerServerToRegistry(request.github_link, request.name);
+              serverType = connectionConfig.type || 'ssh';
+              console.log(`✅ 중앙 레지스트리 등록 완료: ${request.name}`);
+            } catch (error) {
+              console.error(`❌ 중앙 레지스트리 등록 실패:`, error.message);
+              // 레지스트리 등록 실패 시 서버 등록 중단
+              return res.status(500).json({
+                success: false,
+                message: `중앙 레지스트리 등록 실패: ${error.message}. 서버 등록이 취소되었습니다.`
+              });
+            }
+          }
+        
         // 중복 이름 체크 (이미 같은 이름의 승인된 서버가 있는지 확인)
         const existingServer = db.prepare('SELECT id FROM mcp_servers WHERE name = ? AND status = ?').get(request.name, 'approved');
         if (existingServer) {
@@ -566,11 +611,12 @@ const marketplaceController = {
           console.log(`서버가 이미 존재합니다: ${request.name}, 기존 서버 업데이트`);
           const updateStmt = db.prepare(`
             UPDATE mcp_servers 
-            SET description = ?, short_description = ?, github_link = ?, connection_snippet = ?, file_path = ?, allowed_teams = ?, tools = ?, updated_at = datetime('now', '+9 hours')
+            SET description = ?, short_description = ?, github_link = ?, connection_snippet = ?, file_path = ?, allowed_teams = ?, tools = ?, server_type = ?, connection_config = ?, updated_at = datetime('now', '+9 hours')
             WHERE name = ? AND status = ?
           `);
           const allowedTeamsJson = allowedTeams ? JSON.stringify(allowedTeams) : null;
           const toolsJson = toolNames ? JSON.stringify(toolNames) : null;
+          const connectionConfigJson = connectionConfig ? JSON.stringify(connectionConfig) : null;
           updateStmt.run(
             request.description || '',
             finalShortDescription,
@@ -579,6 +625,8 @@ const marketplaceController = {
             request.file_path,
             allowedTeamsJson,
             toolsJson,
+            serverType,
+            connectionConfigJson,
             request.name,
             'approved'
           );
@@ -594,7 +642,9 @@ const marketplaceController = {
             request.file_path,
             request.requested_by,
             allowedTeams,              // 팀 접근 권한
-            toolNames                  // Tool 이름 목록만 저장
+            toolNames,                 // Tool 이름 목록만 저장
+            serverType,                // 서버 타입 (ssh, local 등)
+            connectionConfig           // connection_config (자동 감지된 실행 방법)
           );
         }
 
@@ -660,6 +710,24 @@ const marketplaceController = {
         // mcp_servers 생성/업데이트가 성공한 후에만 mcp_register_requests의 status 업데이트
         mcpRequestModel.updateStatus(id, status, reviewedBy, review_comment);
       } else {
+        // 거부된 경우: 관련 서버가 있으면 삭제
+        const existingServer = db.prepare('SELECT id FROM mcp_servers WHERE name = ? AND status = ?').get(request.name, 'approved');
+        if (existingServer) {
+          console.log(`거부된 요청의 관련 서버 삭제: ${request.name} (ID: ${existingServer.id})`);
+          // 관련된 tool permissions는 CASCADE로 자동 삭제됨
+          // download_logs, mcp_tool_usage_logs는 서버 ID로 참조하므로 수동 삭제 필요
+          try {
+            // 관련 로그 삭제
+            db.prepare('DELETE FROM download_logs WHERE mcp_server_id = ?').run(existingServer.id);
+            db.prepare('DELETE FROM mcp_tool_usage_logs WHERE mcp_server_id = ?').run(existingServer.id);
+            // 서버 삭제 (CASCADE로 tool permissions 자동 삭제)
+            db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(existingServer.id);
+            console.log(`서버 삭제 완료: ${request.name}`);
+          } catch (error) {
+            console.error(`서버 삭제 실패: ${error.message}`);
+            // 삭제 실패해도 요청 상태는 업데이트
+          }
+        }
         // 거부된 경우는 바로 status 업데이트
         mcpRequestModel.updateStatus(id, status, reviewedBy, review_comment);
       }
@@ -696,7 +764,10 @@ const marketplaceController = {
         if (use_sandbox === 'true' && request.github_link) {
           try {
             console.log('🔒 Sandbox 스캔 시작:', request.github_link);
-            const result = await scanToolsFromSandbox(request.github_link);
+            // auth_token을 options로 전달
+            const result = await scanToolsFromSandbox(request.github_link, {
+              authToken: request.auth_token || null
+            });
             return res.json({
               success: true,
               data: {
@@ -745,7 +816,9 @@ const marketplaceController = {
       if (use_sandbox === 'true') {
         try {
           console.log('🔒 Sandbox 스캔 시작:', github_url);
-          const result = await scanToolsFromSandbox(github_url);
+          const result = await scanToolsFromSandbox(github_url, {
+            authToken: null // URL만 있는 경우 토큰 없음
+          });
           return res.json({
             success: true,
             data: {
@@ -912,6 +985,30 @@ const marketplaceController = {
         message: '서버 삭제 중 오류가 발생했습니다.'
       });
     }
+  },
+
+  // Pending 상태의 등록 요청 개수 조회 (알림용)
+  getPendingRequestCount: (req, res) => {
+    try {
+      const result = db.prepare(`
+        SELECT COUNT(*) as count 
+        FROM mcp_register_requests 
+        WHERE status = 'pending'
+      `).get();
+
+      res.json({
+        success: true,
+        count: result?.count || 0
+      });
+    } catch (error) {
+      console.error('Pending 등록 요청 개수 조회 오류:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Pending 등록 요청 개수 조회 중 오류가 발생했습니다.',
+        count: 0
+      });
+    }
+
   }
 };
 

@@ -2,6 +2,7 @@ const dlpLogModel = require('../models/dlpLog');
 const userModel = require('../models/user');
 const db = require('../config/db');
 const { getKoreaTimeSQLite } = require('../utils/dateTime');
+const slackNotifier = require('../services/slackNotifier');
 const EventEmitter = require('events');
 
 // SSE를 위한 이벤트 에미터
@@ -11,6 +12,17 @@ const dlpController = {
   // 외부 프록시 서버에서 DLP 위반 로그 수신
   receiveViolationLog: (req, res) => {
     try {
+      console.log('🔔 DLP 위반 로그 수신 시도:', {
+        method: req.method,
+        path: req.path,
+        headers: {
+          'x-api-key': req.headers['x-api-key'] ? '***설정됨***' : '없음',
+          'x-mcp-proxy-request': req.headers['x-mcp-proxy-request'],
+          'content-type': req.headers['content-type']
+        },
+        body: req.body
+      });
+
       // 필수 필드 검증
       const { source_ip, action_type, violation_type } = req.body;
 
@@ -83,8 +95,25 @@ const dlpController = {
       // 로그 저장
       const log = dlpLogModel.create(logData);
       
+      console.log('✅ DLP 위반 로그 저장 완료:', {
+        id: log.id,
+        source_ip: source_ip,
+        violation_type: violation_type,
+        action_type: action_type
+      });
+      
       // SSE로 새로운 로그 알림 전송
+      console.log('📡 SSE 이벤트 전송 시도:', { logId: log.id, listeners: dlpLogEmitter.listenerCount('newLog') });
       dlpLogEmitter.emit('newLog', log);
+      console.log('✅ SSE 이벤트 전송 완료');
+      
+      const timestamp = getKoreaTimeSQLite();
+      
+      // Slack 알림 전송 (비동기)
+      slackNotifier.notifyDlpViolation({
+        ...log,
+        timestamp
+      });
       
       // 응답 데이터도 null 필드 제거
       const responseData = {
@@ -93,7 +122,7 @@ const dlpController = {
         action_type: action_type,
         violation_type: violation_type,
         severity: logData.severity || 'medium',
-        timestamp: getKoreaTimeSQLite()
+        timestamp
       };
       
       if (logData.original_text) responseData.original_text = logData.original_text;
@@ -221,6 +250,30 @@ const dlpController = {
       });
     }
   },
+
+    // Pending 상태의 DLP 위반 로그 개수 조회 (알림용)
+    getPendingCount: (req, res) => {
+      try {
+        const db = require('../config/db');
+        const result = db.prepare(`
+          SELECT COUNT(*) as count 
+          FROM dlp_violation_logs 
+          WHERE status = 'pending'
+        `).get();
+  
+        res.json({
+          success: true,
+          count: result?.count || 0
+        });
+      } catch (error) {
+        console.error('Pending DLP 위반 로그 개수 조회 오류:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Pending DLP 위반 로그 개수 조회 중 오류가 발생했습니다.',
+          count: 0
+        });
+      }
+    },  
 
   // DLP 로그 상세 조회
   getViolationLogById: (req, res) => {
