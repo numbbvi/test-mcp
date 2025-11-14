@@ -69,12 +69,12 @@ const mcpRequestModel = {
   },
 
   // 등록 요청 생성
-  create: (title, name, description, connectionSnippet, githubLink, filePath, requestedBy, priority = 'normal', imagePath = null) => {
+  create: (title, name, description, connectionSnippet, githubLink, filePath, requestedBy, priority = 'normal', imagePath = null, authToken = null) => {
     const stmt = db.prepare(`
-      INSERT INTO mcp_register_requests (title, name, description, connection_snippet, github_link, file_path, image_path, requested_by, priority) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO mcp_register_requests (title, name, description, connection_snippet, github_link, file_path, image_path, requested_by, priority, auth_token) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(title || name, name, description, connectionSnippet || null, githubLink, filePath, imagePath, requestedBy, priority);
+    const result = stmt.run(title || name, name, description, connectionSnippet || null, githubLink, filePath, imagePath, requestedBy, priority, authToken || null);
     return {
       id: result.lastInsertRowid,
       title: title || name,
@@ -84,6 +84,7 @@ const mcpRequestModel = {
       github_link: githubLink,
       file_path: filePath,
       image_path: imagePath,
+      auth_token: authToken,
       status: 'pending',
       priority
     };

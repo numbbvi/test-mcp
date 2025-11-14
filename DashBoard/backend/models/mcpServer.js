@@ -50,17 +50,19 @@ const mcpServerModel = {
   },
 
   // MCP 서버 생성
-  create: (name, description, shortDescription, githubLink, connectionSnippet, filePath, createdBy, allowedTeams = null, tools = null) => {
+  create: (name, description, shortDescription, githubLink, connectionSnippet, filePath, createdBy, allowedTeams = null, tools = null, serverType = null, connectionConfig = null) => {
     // allowedTeams가 배열이면 JSON 문자열로 변환
     const allowedTeamsJson = allowedTeams ? JSON.stringify(allowedTeams) : null;
     // tools가 배열이면 JSON 문자열로 변환
     const toolsJson = tools ? JSON.stringify(tools) : null;
+    // connectionConfig가 객체이면 JSON 문자열로 변환
+    const connectionConfigJson = connectionConfig ? JSON.stringify(connectionConfig) : null;
     
     const stmt = db.prepare(`
-      INSERT INTO mcp_servers (name, description, short_description, github_link, connection_snippet, file_path, allowed_teams, tools, status, created_by) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO mcp_servers (name, description, short_description, github_link, connection_snippet, file_path, allowed_teams, tools, created_by, server_type, connection_config, status) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(name, description, shortDescription, githubLink, connectionSnippet, filePath, allowedTeamsJson, toolsJson, 'approved', createdBy);
+    const result = stmt.run(name, description, shortDescription, githubLink, connectionSnippet, filePath, allowedTeamsJson, toolsJson, createdBy, serverType, connectionConfigJson, 'approved');
     return {
       id: result.lastInsertRowid,
       name,
@@ -71,6 +73,8 @@ const mcpServerModel = {
       file_path: filePath,
       allowed_teams: allowedTeams,
       tools: tools,
+      server_type: serverType,
+      connection_config: connectionConfig,
       status: 'approved'
     };
   },
