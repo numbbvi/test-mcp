@@ -6,9 +6,12 @@ const Dlp = () => {
   const [loading, setLoading] = useState(true);
   const [selectedLog, setSelectedLog] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedViolationType, setSelectedViolationType] = useState('all');
+  const [violationTypes, setViolationTypes] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0 });
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState(null);
+  const [isRotating, setIsRotating] = useState(false);
   const paginationRef = useRef(pagination);
 
   // pagination ref 업데이트
@@ -16,9 +19,25 @@ const Dlp = () => {
     paginationRef.current = pagination;
   }, [pagination]);
 
+  // 위반 유형 목록 가져오기
+  useEffect(() => {
+    const fetchViolationTypes = async () => {
+      try {
+        const res = await fetch('http://localhost:3001/api/dlp/violation-types');
+        const data = await res.json();
+        if (data.success) {
+          setViolationTypes(data.data || []);
+        }
+      } catch (error) {
+        console.error('위반 유형 목록 로드 실패:', error);
+      }
+    };
+    fetchViolationTypes();
+  }, []);
+
   useEffect(() => {
     setPagination(prev => ({ ...prev, page: 1 }));
-  }, [searchQuery]);
+  }, [searchQuery, selectedViolationType]);
 
   useEffect(() => {
     fetchLogs();
@@ -193,16 +212,27 @@ const Dlp = () => {
     }
   };
 
-  // 검색 필터링
-  const filteredLogs = searchQuery ? logs.filter(log => {
-    const searchLower = searchQuery.toLowerCase();
-    return (
-      (log.username && log.username.toLowerCase().includes(searchLower)) ||
-      (log.employee_id && log.employee_id.toLowerCase().includes(searchLower)) ||
-      (log.source_ip && log.source_ip.toLowerCase().includes(searchLower)) ||
-      (log.violation_type && log.violation_type.toLowerCase().includes(searchLower))
-    );
-  }) : logs;
+  // 검색 및 위반 유형 필터링
+  const filteredLogs = logs.filter(log => {
+    // 검색어 필터링
+    if (searchQuery) {
+      const searchLower = searchQuery.toLowerCase();
+      const matchesSearch = (
+        (log.username && log.username.toLowerCase().includes(searchLower)) ||
+        (log.employee_id && log.employee_id.toLowerCase().includes(searchLower)) ||
+        (log.source_ip && log.source_ip.toLowerCase().includes(searchLower)) ||
+        (log.violation_type && log.violation_type.toLowerCase().includes(searchLower))
+      );
+      if (!matchesSearch) return false;
+    }
+    
+    // 위반 유형 필터링
+    if (selectedViolationType && selectedViolationType !== 'all') {
+      if (log.violation_type !== selectedViolationType) return false;
+    }
+    
+    return true;
+  });
 
   const sortedLogs = sortColumn && sortDirection ? [...filteredLogs].sort((a, b) => {
     let aValue = a[sortColumn];
@@ -357,21 +387,54 @@ const Dlp = () => {
       </div>
 
       <div className="dlp-controls">
-        <div className="search-container">
-          <svg className="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Search users"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+        <div className="search-and-filter-container">
+          <div className="search-container">
+            <svg className="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            <input
+              type="text"
+              className="search-input"
+              placeholder="Search users"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <select
+            className="violation-type-dropdown"
+            value={selectedViolationType}
+            onChange={(e) => setSelectedViolationType(e.target.value)}
+          >
+            <option value="all">전체 위반 유형</option>
+            {violationTypes.map(vt => (
+              <option key={vt.type} value={vt.type}>
+                {vt.type}
+              </option>
+            ))}
+          </select>
         </div>
-        <button onClick={() => fetchLogs()} className="btn-refresh">
-          새로고침
+        <button 
+          onClick={() => {
+            setIsRotating(true);
+            fetchLogs();
+          }} 
+          className="btn-refresh" 
+          title="새로고침"
+        >
+          <svg 
+            className={`refresh-icon ${isRotating ? 'rotating' : ''}`}
+            onAnimationEnd={() => setIsRotating(false)}
+            width="20" 
+            height="20" 
+            viewBox="0 0 24 24" 
+            fill="none" 
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path d="M1 4V10H7" stroke="#003153" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M23 20V14H17" stroke="#003153" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14L18.36 18.36A9 9 0 0 1 3.51 15" stroke="#003153" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
         </button>
       </div>
 
@@ -386,7 +449,10 @@ const Dlp = () => {
                 </th>
                 <th>사용자</th>
                 <th>위반 유형</th>
-                <th>심각도</th>
+                <th className="sortable" onClick={() => handleSort('severity')}>
+                  심각도
+                  {getSortIcon('severity')}
+                </th>
                 <th>내용</th>
                 <th>작업</th>
               </tr>
@@ -442,89 +508,117 @@ const Dlp = () => {
       </div>
 
       {selectedLog && (
-        <div className="dlp-right">
-          <div className="dlp-detail-content">
-            <div className="dlp-detail-header">
-              <div className="dlp-detail-title">
-              <h2>DLP 위반 상세 정보</h2>
+        <div className={`dlp-detail-drawer is-open`}>
+          <div 
+            className="dlp-detail-drawer__backdrop"
+            onClick={handleCloseDetail}
+          />
+          <aside className="dlp-detail-drawer__panel" role="dialog" aria-modal="true">
+            <header className="dlp-detail-drawer__header">
+              <div>
+                <p className="dlp-detail-drawer__eyebrow">DLP Violation</p>
+                <h2 className="dlp-detail-drawer__title">DLP 위반 상세 정보</h2>
               </div>
-              <button className="btn-close" onClick={handleCloseDetail}>×</button>
-            </div>
-            <div className="dlp-detail-body">
-              <div className="detail-section">
+              <button 
+                type="button" 
+                className="dlp-detail-drawer__close"
+                onClick={handleCloseDetail}
+                aria-label="Close details"
+              >
+                &times;
+              </button>
+            </header>
+            <div className="dlp-detail-drawer__content">
+              <section className="dlp-detail-drawer__section">
                 <h3>기본 정보</h3>
-                <div className="detail-item">
-                  <strong>위반 ID:</strong> {selectedLog.id}
-                </div>
-                <div className="detail-item">
-                  <strong>위반 유형:</strong> {getViolationTypeText(selectedLog.violation_type)}
-                </div>
-                <div className="detail-item">
-                  <strong>심각도:</strong>{' '}
-                  <span className={`severity-badge ${getSeverityBadgeClass(selectedLog.severity)}`}>
-                    {getSeverityText(selectedLog.severity)}
-                  </span>
-                </div>
-                <div className="detail-item">
-                  <strong>탐지 시간:</strong> {formatDate(selectedLog.timestamp)}
-                </div>
-                <div className="detail-item">
-                  <strong>IP 주소:</strong> {selectedLog.source_ip || '-'}
-                </div>
-                <div className="detail-item">
-                  <strong>액션 타입:</strong> {selectedLog.action_type || '-'}
-                </div>
-              </div>
-
-              <div className="detail-section">
-                <h3>사용자 정보</h3>
-                {selectedLog.userInfo ? (
-                  <>
-                    <div className="detail-item">
-                      <strong>사용자명:</strong> {selectedLog.userInfo.username || '-'}
-                    </div>
-                    <div className="detail-item">
-                      <strong>사원번호:</strong> {selectedLog.userInfo.employee_id || '-'}
-                    </div>
-                  </>
-                ) : selectedLog.username ? (
-                  <>
-                    <div className="detail-item">
-                      <strong>사용자명:</strong> {selectedLog.username}
-                    </div>
-                    <div className="detail-item">
-                      <strong>사원번호:</strong> {selectedLog.employee_id || '-'}
-                    </div>
-                  </>
-                ) : (
-                  <div className="detail-item">
-                    <strong>사용자 정보:</strong> IP 주소로 조회된 사용자 정보가 없습니다.
+                <div className="dlp-detail-drawer__info-grid">
+                  <div className="dlp-detail-drawer__info-item">
+                    <span className="dlp-detail-drawer__info-label">위반 ID</span>
+                    <span className="dlp-detail-drawer__info-value">{selectedLog.id}</span>
                   </div>
-                )}
-              </div>
+                  <div className="dlp-detail-drawer__info-item">
+                    <span className="dlp-detail-drawer__info-label">위반 유형</span>
+                    <span className="dlp-detail-drawer__info-value">{getViolationTypeText(selectedLog.violation_type)}</span>
+                  </div>
+                  <div className="dlp-detail-drawer__info-item">
+                    <span className="dlp-detail-drawer__info-label">심각도</span>
+                    <span className="dlp-detail-drawer__info-value">
+                      <span className={`severity-badge ${getSeverityBadgeClass(selectedLog.severity)}`}>
+                        {getSeverityText(selectedLog.severity)}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="dlp-detail-drawer__info-item">
+                    <span className="dlp-detail-drawer__info-label">탐지 시간</span>
+                    <span className="dlp-detail-drawer__info-value">{formatDate(selectedLog.timestamp)}</span>
+                  </div>
+                  <div className="dlp-detail-drawer__info-item">
+                    <span className="dlp-detail-drawer__info-label">IP 주소</span>
+                    <span className="dlp-detail-drawer__info-value">{selectedLog.source_ip || '-'}</span>
+                  </div>
+                  <div className="dlp-detail-drawer__info-item">
+                    <span className="dlp-detail-drawer__info-label">액션 타입</span>
+                    <span className="dlp-detail-drawer__info-value">{selectedLog.action_type || '-'}</span>
+                  </div>
+                </div>
+              </section>
+
+              <section className="dlp-detail-drawer__section">
+                <h3>사용자 정보</h3>
+                <div className="dlp-detail-drawer__info-grid">
+                  {selectedLog.userInfo ? (
+                    <>
+                      <div className="dlp-detail-drawer__info-item">
+                        <span className="dlp-detail-drawer__info-label">사용자명</span>
+                        <span className="dlp-detail-drawer__info-value">{selectedLog.userInfo.username || '-'}</span>
+                      </div>
+                      <div className="dlp-detail-drawer__info-item">
+                        <span className="dlp-detail-drawer__info-label">사원번호</span>
+                        <span className="dlp-detail-drawer__info-value">{selectedLog.userInfo.employee_id || '-'}</span>
+                      </div>
+                    </>
+                  ) : selectedLog.username ? (
+                    <>
+                      <div className="dlp-detail-drawer__info-item">
+                        <span className="dlp-detail-drawer__info-label">사용자명</span>
+                        <span className="dlp-detail-drawer__info-value">{selectedLog.username}</span>
+                      </div>
+                      <div className="dlp-detail-drawer__info-item">
+                        <span className="dlp-detail-drawer__info-label">사원번호</span>
+                        <span className="dlp-detail-drawer__info-value">{selectedLog.employee_id || '-'}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="dlp-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
+                      <span className="dlp-detail-drawer__info-label">사용자 정보</span>
+                      <span className="dlp-detail-drawer__info-value">IP 주소로 조회된 사용자 정보가 없습니다.</span>
+                    </div>
+                  )}
+                </div>
+              </section>
 
               {selectedLog.original_text && (
-                <div className="detail-section">
+                <section className="dlp-detail-drawer__section">
                   <h3>Original Text</h3>
-                  <div className="code-box">
+                  <div className="dlp-detail-drawer__code-box">
                     <pre>{selectedLog.original_text}</pre>
                   </div>
-                </div>
+                </section>
               )}
 
               {selectedLog.masked_text && (
-                <div className="detail-section">
+                <section className="dlp-detail-drawer__section">
                   <h3>Masked Text</h3>
-                  <div className="code-box">
+                  <div className="dlp-detail-drawer__code-box">
                     <pre>{selectedLog.masked_text}</pre>
                   </div>
-                </div>
+                </section>
               )}
 
               {selectedLog.original_json && (
-                <div className="detail-section">
+                <section className="dlp-detail-drawer__section">
                   <h3>Original JSON</h3>
-                  <div className="code-box">
+                  <div className="dlp-detail-drawer__code-box">
                     <pre>{(() => {
                       try {
                         // 문자열인 경우 파싱 시도
@@ -540,10 +634,10 @@ const Dlp = () => {
                       }
                     })()}</pre>
                   </div>
-                </div>
+                </section>
               )}
             </div>
-          </div>
+          </aside>
         </div>
       )}
     </div>

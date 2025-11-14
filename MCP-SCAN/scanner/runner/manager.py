@@ -455,6 +455,10 @@ class MCPScannerManager:
             self.log_manager(f"Final count: {total_files} total files, {scanned_files} scanned files (lang: {lang_scanned_files}, mcp: {mcp_scanned_files})")
             
             findings_dict = [self.formatter.finding_to_dict(f) for f in all_findings]
+            
+            # 파일 경로 정규화: 임시 경로를 저장소 내 상대 경로로 변환
+            findings_dict = self._normalize_file_paths(findings_dict, actual_repo_path)
+            
             self.formatter.display_scan_summary(findings_dict, languages)
         
         self._cleanup_if_cloned(repo_path_str, actual_repo_path)
@@ -747,6 +751,75 @@ class MCPScannerManager:
             except Exception as e:
                 self.log_manager(f"Warning: Failed to cleanup temp directory: {e}")
         self.work_dir.mkdir(parents=True, exist_ok=True)
+    
+    def _normalize_file_paths(self, findings: List[Dict[str, Any]], repo_path: Path) -> List[Dict[str, Any]]:
+        """
+        정규화 파일 경로: 임시 경로를 저장소 내 상대 경로로 변환
+        
+        Args:
+            findings: Finding 딕셔너리 리스트
+            repo_path: 저장소 루트 경로
+            
+        Returns:
+            정규화된 Finding 딕셔너리 리스트
+        """
+        normalized_findings = []
+        repo_name = repo_path.name
+        
+        for finding in findings:
+            file_path = finding.get("file", "")
+            if file_path:
+                try:
+                    # 절대 경로인 경우 저장소 경로를 기준으로 상대 경로 추출
+                    if Path(file_path).is_absolute():
+                        try:
+                            file_path_obj = Path(file_path).resolve()
+                            repo_path_resolved = repo_path.resolve()
+                            if str(file_path_obj).startswith(str(repo_path_resolved)):
+                                relative_path = file_path_obj.relative_to(repo_path_resolved)
+                                normalized_path = str(relative_path).replace('\\', '/')
+                                finding["file"] = normalized_path
+                            else:
+                                # 절대 경로지만 repo_path에 포함되지 않는 경우
+                                # 임시 경로 패턴 확인
+                                self._normalize_temp_path(finding, file_path, repo_name)
+                        except (ValueError, Exception) as e:
+                            # 상대 경로 변환 실패 시 임시 경로 패턴 확인
+                            self._normalize_temp_path(finding, file_path, repo_name)
+                    else:
+                        # 상대 경로인 경우 임시 경로 패턴 확인
+                        self._normalize_temp_path(finding, file_path, repo_name)
+                except Exception as e:
+                    self.log_manager(f"Warning: Failed to normalize file path '{file_path}': {e}")
+            
+            normalized_findings.append(finding)
+        
+        return normalized_findings
+    
+    def _normalize_temp_path(self, finding: Dict[str, Any], file_path: str, repo_name: str):
+        """
+        임시 경로 패턴을 제거하여 저장소 내 상대 경로로 변환
+        
+        Args:
+            finding: Finding 딕셔너리
+            file_path: 원본 파일 경로
+            repo_name: 저장소 이름
+        """
+        # 임시 경로 패턴: output/temp/{repo_name}/... 또는 temp/{repo_name}/...
+        temp_patterns = [
+            f"output/temp/{repo_name}/",
+            f"temp/{repo_name}/",
+            f"output/temp/",
+            f"temp/",
+        ]
+        
+        for pattern in temp_patterns:
+            if pattern in file_path:
+                # 패턴 이후의 부분 추출
+                normalized_path = file_path.split(pattern, 1)[-1]
+                finding["file"] = normalized_path
+                self.log_manager(f"Normalized file path: '{file_path}' -> '{normalized_path}'")
+                return
     
     def log_manager(self, msg: str):
         if self.verbose:

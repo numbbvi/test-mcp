@@ -11,7 +11,7 @@ const RequestBoard = () => {
   const [filter, setFilter] = useState('all'); // all, pending, approved, rejected
   const [reviewForm, setReviewForm] = useState({ status: '', comment: '', server_description: '', allowed_teams: [], tools: [] });
   const [user, setUser] = useState(null);
-  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0, limit: 20 });
+  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0, limit: 8 });
   const [scannedTools, setScannedTools] = useState([]);
   const [scanningTools, setScanningTools] = useState(false);
   const [showScanModal, setShowScanModal] = useState(false);
@@ -36,6 +36,8 @@ const RequestBoard = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentScanId, setCurrentScanId] = useState(null);
   const [teams, setTeams] = useState([]); // DB에서 가져온 팀 목록
+  const [isRotating, setIsRotating] = useState(false);
+  const [requestCounts, setRequestCounts] = useState({ all: 0, pending: 0, approved: 0, rejected: 0 }); // 각 탭별 요청 개수
 
   // selectedRequest가 변경될 때 저장된 결과 복원
   useEffect(() => {
@@ -112,6 +114,60 @@ const RequestBoard = () => {
     fetchRequests();
   }, [filter, pagination.page]);
 
+  // 각 탭별 요청 개수 가져오기
+  useEffect(() => {
+    const fetchRequestCounts = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const headers = {
+          'Content-Type': 'application/json'
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        
+        // 각 상태별로 요청 개수 가져오기
+        const [allRes, pendingRes, approvedRes, rejectedRes] = await Promise.all([
+          fetch(`http://localhost:3001/api/marketplace/requests?limit=10000`, {
+            headers
+          }),
+          fetch(`http://localhost:3001/api/marketplace/requests?status=pending&limit=10000`, {
+            headers
+          }),
+          fetch(`http://localhost:3001/api/marketplace/requests?status=approved&limit=10000`, {
+            headers
+          }),
+          fetch(`http://localhost:3001/api/marketplace/requests?status=rejected&limit=10000`, {
+            headers
+          })
+        ]);
+        
+        const [allData, pendingData, approvedData, rejectedData] = await Promise.all([
+          allRes.json(),
+          pendingRes.json(),
+          approvedRes.json(),
+          rejectedRes.json()
+        ]);
+        
+        const allCount = (allData.success ? (allData.pagination?.total || 0) : 0);
+        const pendingCount = (pendingData.success ? (pendingData.pagination?.total || 0) : 0);
+        const approvedCount = (approvedData.success ? (approvedData.pagination?.total || 0) : 0);
+        const rejectedCount = (rejectedData.success ? (rejectedData.pagination?.total || 0) : 0);
+        
+        setRequestCounts({
+          all: allCount,
+          pending: pendingCount,
+          approved: approvedCount,
+          rejected: rejectedCount
+        });
+      } catch (error) {
+        console.error('요청 개수 조회 실패:', error);
+      }
+    };
+    
+    fetchRequestCounts();
+  }, []);
+
   // ESC 키로 상세보기 닫기
   useEffect(() => {
     if (!selectedRequest) return;
@@ -137,7 +193,7 @@ const RequestBoard = () => {
         queryParams.append('status', filter);
       }
       queryParams.append('page', pagination.page);
-      // limit은 백엔드 기본값 사용 (기본 20개)
+      queryParams.append('limit', '8');
       
       // JWT 토큰 가져오기
       const token = localStorage.getItem('token');
@@ -162,6 +218,13 @@ const RequestBoard = () => {
           total: data.pagination?.total || 0,
           totalPages: data.pagination?.totalPages || 1,
           limit: data.pagination?.limit || prev.limit || 20
+        }));
+        
+        // 현재 필터에 맞는 개수 업데이트
+        const filteredCount = data.pagination?.total || 0;
+        setRequestCounts(prev => ({
+          ...prev,
+          [filter]: filteredCount
         }));
         
         // selectedRequest가 있으면 최신 정보로 업데이트
@@ -199,8 +262,7 @@ const RequestBoard = () => {
         queryParams.append('status', filter);
       }
       queryParams.append('page', pagination.page);
-      // limit은 백엔드 기본값 사용 (기본 20개)
-      // 필요시 queryParams.append('limit', '20'); 로 명시적으로 설정 가능
+      queryParams.append('limit', '8');
       
       // JWT 토큰 가져오기
       const token = localStorage.getItem('token');
@@ -949,43 +1011,103 @@ const RequestBoard = () => {
             className={`request-board-tab ${filter === 'all' ? 'active' : ''}`}
             onClick={() => setFilter('all')}
           >
-            전체
+            전체 ({requestCounts.all})
           </button>
           <button 
             className={`request-board-tab ${filter === 'pending' ? 'active' : ''}`}
             onClick={() => setFilter('pending')}
           >
-            대기중
+            대기중 ({requestCounts.pending})
           </button>
           <button 
             className={`request-board-tab ${filter === 'approved' ? 'active' : ''}`}
             onClick={() => setFilter('approved')}
           >
-            승인됨
+            승인됨 ({requestCounts.approved})
           </button>
           <button 
             className={`request-board-tab ${filter === 'rejected' ? 'active' : ''}`}
             onClick={() => setFilter('rejected')}
           >
-            거부됨
+            거부됨 ({requestCounts.rejected})
           </button>
         </div>
       </div>
 
       <div className="list-page__controls">
-        <div className="search-container">
-          <svg className="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Search servers"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+        <div className="search-container" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+            <svg className="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            <input
+              type="text"
+              className="search-input"
+              placeholder="Search Servers"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
         </div>
+        <button 
+          onClick={async () => {
+            setIsRotating(true);
+            await fetchRequests();
+            // 새로고침 시 개수도 다시 가져오기
+            const fetchRequestCounts = async () => {
+              try {
+                const token = localStorage.getItem('token');
+                const headers = {
+                  'Content-Type': 'application/json'
+                };
+                if (token) {
+                  headers['Authorization'] = `Bearer ${token}`;
+                }
+                
+                const [allRes, pendingRes, approvedRes, rejectedRes] = await Promise.all([
+                  fetch(`http://localhost:3001/api/marketplace/requests?limit=10000`, { headers }),
+                  fetch(`http://localhost:3001/api/marketplace/requests?status=pending&limit=10000`, { headers }),
+                  fetch(`http://localhost:3001/api/marketplace/requests?status=approved&limit=10000`, { headers }),
+                  fetch(`http://localhost:3001/api/marketplace/requests?status=rejected&limit=10000`, { headers })
+                ]);
+                
+                const [allData, pendingData, approvedData, rejectedData] = await Promise.all([
+                  allRes.json(),
+                  pendingRes.json(),
+                  approvedRes.json(),
+                  rejectedRes.json()
+                ]);
+                
+                setRequestCounts({
+                  all: (allData.success ? (allData.pagination?.total || 0) : 0),
+                  pending: (pendingData.success ? (pendingData.pagination?.total || 0) : 0),
+                  approved: (approvedData.success ? (approvedData.pagination?.total || 0) : 0),
+                  rejected: (rejectedData.success ? (rejectedData.pagination?.total || 0) : 0)
+                });
+              } catch (error) {
+                console.error('요청 개수 조회 실패:', error);
+              }
+            };
+            fetchRequestCounts();
+          }} 
+          className="btn-refresh" 
+          title="새로고침"
+        >
+          <svg 
+            className={`refresh-icon ${isRotating ? 'rotating' : ''}`}
+            onAnimationEnd={() => setIsRotating(false)}
+            width="20" 
+            height="20" 
+            viewBox="0 0 24 24" 
+            fill="none" 
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path d="M1 4V10H7" stroke="#003153" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M23 20V14H17" stroke="#003153" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14L18.36 18.36A9 9 0 0 1 3.51 15" stroke="#003153" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
       </div>
 
       <div className="requests-table-container">
@@ -1072,62 +1194,89 @@ const RequestBoard = () => {
       </div>
 
       {selectedRequest && (
-        <div className="request-board-right">
-          <div className="request-detail-content">
-            <div className="request-detail-header">
-              <div className="request-detail-title">
-              <h2>{selectedRequest.title || selectedRequest.name}</h2>
+        <div className={`request-detail-drawer is-open`}>
+          <div 
+            className="request-detail-drawer__backdrop"
+            onClick={handleCloseDetail}
+          />
+          <aside className="request-detail-drawer__panel" role="dialog" aria-modal="true">
+            <header className="request-detail-drawer__header">
+              <div>
+                <p className="request-detail-drawer__eyebrow">Server Request</p>
+                <h2 className="request-detail-drawer__title">{selectedRequest.title || selectedRequest.name}</h2>
               </div>
-              <button className="btn-close" onClick={handleCloseDetail}>×</button>
-            </div>
-            <div className="request-detail-body">
-              <div className="detail-section">
+              <button 
+                type="button" 
+                className="request-detail-drawer__close"
+                onClick={handleCloseDetail}
+                aria-label="Close details"
+              >
+                &times;
+              </button>
+            </header>
+            <div className="request-detail-drawer__content">
+              <section className="request-detail-drawer__section">
                 <h3>요청 정보</h3>
-                <div className="detail-item">
-                  <strong>요청자:</strong> {selectedRequest.requester?.username || '알 수 없음'}
-                  ({selectedRequest.requester?.employee_id || '-'})
-                </div>
-                <div className="detail-item">
-                  <strong>팀:</strong> {selectedRequest.requester?.team || '-'}
-                </div>
-                <div className="detail-item">
-                  <strong>직책:</strong> {selectedRequest.requester?.position || '-'}
-                </div>
-                <div className="detail-item">
-                  <strong>요청일:</strong> {(() => {
-                    if (!selectedRequest.created_at) return '-';
-                    // SQLite datetime 문자열을 직접 파싱 (시간대 변환 없이)
-                    const match = selectedRequest.created_at.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
-                    if (match) {
-                      const [, year, month, day, hours, minutes, seconds] = match;
-                      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-                    }
-                    return selectedRequest.created_at;
-                  })()}
-                </div>
-              </div>
-
-              <div className="detail-section">
-                <h3>서버 정보</h3>
-                <div className="detail-item">
-                  <strong>이름:</strong> {selectedRequest.name}
-                </div>
-                <div className="detail-item">
-                  <strong>설명:</strong>
-                  <p className="detail-text">{selectedRequest.description || '설명 없음'}</p>
-                </div>
-                {selectedRequest.connection_snippet && (
-                  <div className="detail-item">
-                    <strong>Connection:</strong>
-                    <div className="code-box">
-                      <pre><code>{selectedRequest.connection_snippet}</code></pre>
-                    </div>
+                <div className="request-detail-drawer__info-grid">
+                  <div className="request-detail-drawer__info-item">
+                    <span className="request-detail-drawer__info-label">요청자</span>
+                    <span className="request-detail-drawer__info-value">
+                      {selectedRequest.requester?.username || '알 수 없음'}
+                      {selectedRequest.requester?.employee_id && ` (${selectedRequest.requester.employee_id})`}
+                    </span>
                   </div>
-                )}
-              </div>
+                  <div className="request-detail-drawer__info-item">
+                    <span className="request-detail-drawer__info-label">팀</span>
+                    <span className="request-detail-drawer__info-value">{selectedRequest.requester?.team || '-'}</span>
+                  </div>
+                  <div className="request-detail-drawer__info-item">
+                    <span className="request-detail-drawer__info-label">직책</span>
+                    <span className="request-detail-drawer__info-value">{selectedRequest.requester?.position || '-'}</span>
+                  </div>
+                  <div className="request-detail-drawer__info-item">
+                    <span className="request-detail-drawer__info-label">요청일</span>
+                    <span className="request-detail-drawer__info-value">
+                      {(() => {
+                        if (!selectedRequest.created_at) return '-';
+                        // SQLite datetime 문자열을 직접 파싱 (시간대 변환 없이)
+                        const match = selectedRequest.created_at.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+                        if (match) {
+                          const [, year, month, day, hours, minutes, seconds] = match;
+                          return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+                        }
+                        return selectedRequest.created_at;
+                      })()}
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              <section className="request-detail-drawer__section">
+                <h3>서버 정보</h3>
+                <div className="request-detail-drawer__info-grid">
+                  <div className="request-detail-drawer__info-item">
+                    <span className="request-detail-drawer__info-label">이름</span>
+                    <span className="request-detail-drawer__info-value">{selectedRequest.name}</span>
+                  </div>
+                  {selectedRequest.description && (
+                    <div className="request-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
+                      <span className="request-detail-drawer__info-label">설명</span>
+                      <span className="request-detail-drawer__info-value">{selectedRequest.description}</span>
+                    </div>
+                  )}
+                  {selectedRequest.connection_snippet && (
+                    <div className="request-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
+                      <span className="request-detail-drawer__info-label">Connection</span>
+                      <div className="request-detail-drawer__code-box">
+                        <pre><code>{selectedRequest.connection_snippet}</code></pre>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
 
               {selectedRequest.status === 'pending' && (
-                <div className="detail-section">
+                <section className="request-detail-drawer__section">
                   <h3>위험도 분석</h3>
                   {/* 스캔 여부에 따라 버튼 표시 조건 변경 */}
                   {/* scanned가 0이거나 null이고, 저장된 결과도 없으면 Run Analysis 버튼만 표시 */}
@@ -1176,7 +1325,7 @@ const RequestBoard = () => {
                             onClick={handleRunAnalysis}
                             className="btn-refresh"
                             disabled={analyzingRisk || (!selectedRequest.github_link && !selectedRequest.file_path)}
-                            style={{ width: '100%', marginBottom: '16px' }}
+                            style={{ marginBottom: '16px' }}
                           >
                             {analyzingRisk ? 'Analyzing...' : 'Run Analysis'}
                           </button>
@@ -1400,59 +1549,59 @@ const RequestBoard = () => {
                               {/* 개별 팀 체크박스 */}
                               {teams.length > 0 ? (
                                 teams.map(team => (
-                                  <label key={team} style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                                    <input
-                                      type="checkbox"
-                                      checked={reviewForm.allowed_teams.includes(team)}
-                                      onChange={(e) => {
-                                        let newAllowedTeams;
+                                <label key={team} style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={reviewForm.allowed_teams.includes(team)}
+                                    onChange={(e) => {
+                                      let newAllowedTeams;
+                                      if (e.target.checked) {
+                                        newAllowedTeams = [...reviewForm.allowed_teams, team];
+                                      } else {
+                                        newAllowedTeams = reviewForm.allowed_teams.filter(t => t !== team);
+                                      }
+                                      
+                                      // 접근 가능 팀 선택 시 모든 Tool의 allowed_teams에 자동으로 추가/제거
+                                      const updatedTools = reviewForm.tools.map(tool => {
                                         if (e.target.checked) {
-                                          newAllowedTeams = [...reviewForm.allowed_teams, team];
+                                          // 체크 시: 해당 팀이 없으면 추가
+                                          if (!tool.allowed_teams.includes(team)) {
+                                            return { ...tool, allowed_teams: [...tool.allowed_teams, team] };
+                                          }
                                         } else {
-                                          newAllowedTeams = reviewForm.allowed_teams.filter(t => t !== team);
+                                          // 체크 해제 시: Tool의 allowed_teams에서도 제거
+                                          if (tool.allowed_teams.includes(team)) {
+                                            return { ...tool, allowed_teams: tool.allowed_teams.filter(t => t !== team) };
+                                          }
                                         }
-                                        
-                                        // 접근 가능 팀 선택 시 모든 Tool의 allowed_teams에 자동으로 추가/제거
-                                        const updatedTools = reviewForm.tools.map(tool => {
-                                          if (e.target.checked) {
-                                            // 체크 시: 해당 팀이 없으면 추가
-                                            if (!tool.allowed_teams.includes(team)) {
-                                              return { ...tool, allowed_teams: [...tool.allowed_teams, team] };
-                                            }
-                                          } else {
-                                            // 체크 해제 시: Tool의 allowed_teams에서도 제거
-                                            if (tool.allowed_teams.includes(team)) {
-                                              return { ...tool, allowed_teams: tool.allowed_teams.filter(t => t !== team) };
-                                            }
+                                        return tool;
+                                      });
+                                      
+                                      // scannedTools도 동기화 (UI 표시용)
+                                      const updatedScannedTools = scannedTools.map(tool => {
+                                        if (e.target.checked) {
+                                          if (!tool.allowed_teams.includes(team)) {
+                                            return { ...tool, allowed_teams: [...tool.allowed_teams, team] };
                                           }
-                                          return tool;
-                                        });
-                                        
-                                        // scannedTools도 동기화 (UI 표시용)
-                                        const updatedScannedTools = scannedTools.map(tool => {
-                                          if (e.target.checked) {
-                                            if (!tool.allowed_teams.includes(team)) {
-                                              return { ...tool, allowed_teams: [...tool.allowed_teams, team] };
-                                            }
-                                          } else {
-                                            if (tool.allowed_teams.includes(team)) {
-                                              return { ...tool, allowed_teams: tool.allowed_teams.filter(t => t !== team) };
-                                            }
+                                        } else {
+                                          if (tool.allowed_teams.includes(team)) {
+                                            return { ...tool, allowed_teams: tool.allowed_teams.filter(t => t !== team) };
                                           }
-                                          return tool;
-                                        });
-                                        
-                                        setReviewForm({
-                                          ...reviewForm,
-                                          allowed_teams: newAllowedTeams,
-                                          tools: updatedTools
-                                        });
-                                        setScannedTools(updatedScannedTools);
-                                      }}
-                                      style={{ marginRight: '8px' }}
-                                    />
-                                    <span>{team}</span>
-                                  </label>
+                                        }
+                                        return tool;
+                                      });
+                                      
+                                      setReviewForm({
+                                        ...reviewForm,
+                                        allowed_teams: newAllowedTeams,
+                                        tools: updatedTools
+                                      });
+                                      setScannedTools(updatedScannedTools);
+                                    }}
+                                    style={{ marginRight: '8px' }}
+                                  />
+                                  <span>{team}</span>
+                                </label>
                                 ))
                               ) : (
                                 <p style={{ fontSize: '0.85rem', color: '#999', marginTop: '8px' }}>팀 목록을 불러오는 중...</p>
@@ -1513,59 +1662,70 @@ const RequestBoard = () => {
                       )}
                     </div>
                   )}
-                </div>
+                </section>
               )}
 
 
               {selectedRequest.status === 'pending' && !isAdmin && (
-                <div className="detail-section">
+                <section className="request-detail-drawer__section">
                   <h3>상태</h3>
-                  <div className="detail-item">
-                    <strong>현재 상태:</strong>{' '}
-                    <span className={`status-badge ${getStatusBadgeClass(selectedRequest.status)}`}>
-                      {getStatusText(selectedRequest.status)}
-                    </span>
-                    <p style={{ marginTop: '8px', color: '#6c5d53' }}>
-                      검토 대기 중입니다. 관리자가 검토 후 결과를 알려드립니다.
-                    </p>
+                  <div className="request-detail-drawer__info-grid">
+                    <div className="request-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
+                      <span className="request-detail-drawer__info-label">현재 상태</span>
+                      <span className="request-detail-drawer__info-value">
+                        <span className={`status-badge ${getStatusBadgeClass(selectedRequest.status)}`}>
+                          {getStatusText(selectedRequest.status)}
+                        </span>
+                        <p style={{ marginTop: '8px', color: '#6c5d53', fontWeight: 'normal' }}>
+                          검토 대기 중입니다. 관리자가 검토 후 결과를 알려드립니다.
+                        </p>
+                      </span>
+                    </div>
                   </div>
-                </div>
+                </section>
               )}
 
               {selectedRequest.status !== 'pending' && (
-                <div className="detail-section">
+                <section className="request-detail-drawer__section">
                   <h3>검토 결과</h3>
-                  <div className="detail-item">
-                    <strong>상태:</strong>{' '}
-                    <span className={`status-badge ${getStatusBadgeClass(selectedRequest.status)}`}>
-                      {getStatusText(selectedRequest.status)}
-                    </span>
-                  </div>
-                  {selectedRequest.reviewer && (
-                    <div className="detail-item">
-                      <strong>검토자:</strong> {selectedRequest.reviewer?.username || '알 수 없음'}
-                      {selectedRequest.reviewed_at && (
-                        <span className="review-date">
-                          ({(() => {
-                            if (!selectedRequest.reviewed_at) return '';
-                            // SQLite datetime 문자열을 직접 파싱 (시간대 변환 없이)
-                            const match = selectedRequest.reviewed_at.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
-                            if (match) {
-                              const [, year, month, day, hours, minutes, seconds] = match;
-                              return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-                            }
-                            return selectedRequest.reviewed_at;
-                          })()})
+                  <div className="request-detail-drawer__info-grid">
+                    <div className="request-detail-drawer__info-item">
+                      <span className="request-detail-drawer__info-label">상태</span>
+                      <span className="request-detail-drawer__info-value">
+                        <span className={`status-badge ${getStatusBadgeClass(selectedRequest.status)}`}>
+                          {getStatusText(selectedRequest.status)}
                         </span>
-                      )}
+                      </span>
                     </div>
-                  )}
-                  {selectedRequest.review_comment && (
-                    <div className="detail-item">
-                      <strong>검토 코멘트:</strong>
-                      <p className="detail-text">{selectedRequest.review_comment}</p>
-                    </div>
-                  )}
+                    {selectedRequest.reviewer && (
+                      <div className="request-detail-drawer__info-item">
+                        <span className="request-detail-drawer__info-label">검토자</span>
+                        <span className="request-detail-drawer__info-value">
+                          {selectedRequest.reviewer?.username || '알 수 없음'}
+                          {selectedRequest.reviewed_at && (
+                            <span className="review-date" style={{ display: 'block', fontSize: '0.85rem', color: 'var(--muted)', marginTop: '4px' }}>
+                              {(() => {
+                                if (!selectedRequest.reviewed_at) return '';
+                                // SQLite datetime 문자열을 직접 파싱 (시간대 변환 없이)
+                                const match = selectedRequest.reviewed_at.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+                                if (match) {
+                                  const [, year, month, day, hours, minutes, seconds] = match;
+                                  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+                                }
+                                return selectedRequest.reviewed_at;
+                              })()}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                    {selectedRequest.review_comment && (
+                      <div className="request-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
+                        <span className="request-detail-drawer__info-label">검토 코멘트</span>
+                        <span className="request-detail-drawer__info-value" style={{ fontWeight: 'normal' }}>{selectedRequest.review_comment}</span>
+                      </div>
+                    )}
+                  </div>
                   {/* 삭제 버튼 (관리자 또는 요청자 본인만) */}
                   {(() => {
                     const isAdmin = user && (
@@ -1625,10 +1785,10 @@ const RequestBoard = () => {
                     }
                     return null;
                   })()}
-                </div>
+                </section>
               )}
             </div>
-          </div>
+          </aside>
         </div>
       )}
 

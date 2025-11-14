@@ -5,20 +5,26 @@ const DownloadLogs = () => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTeam, setSelectedTeam] = useState('all');
+  const [teams, setTeams] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0 });
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState(null);
+  const [isRotating, setIsRotating] = useState(false);
   const searchTimeoutRef = useRef(null);
   const isInitialLoad = useRef(true);
   const skipPageEffect = useRef(false);
 
-  const fetchLogs = useCallback(async (query, page) => {
+  const fetchLogs = useCallback(async (query, page, team = 'all') => {
     try {
       setLoading(true);
       
       const queryParams = new URLSearchParams();
       if (query) {
-        queryParams.append('username', query);
+        queryParams.append('query', query);
+      }
+      if (team && team !== 'all') {
+        queryParams.append('team', team);
       }
       queryParams.append('page', page);
       queryParams.append('limit', '20');
@@ -74,13 +80,44 @@ const DownloadLogs = () => {
     }
   }, []);
 
+  // 팀 목록 가져오기
+  useEffect(() => {
+    const fetchTeams = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch('http://localhost:3001/api/users/teams', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        
+        const data = await res.json();
+        if (data.success) {
+          setTeams(data.data || []);
+        } else {
+          console.error('팀 목록 조회 실패:', data.message);
+          setTeams([]);
+        }
+      } catch (error) {
+        console.error('팀 목록 로드 실패:', error);
+        setTeams([]);
+      }
+    };
+    
+    fetchTeams();
+  }, []);
+
   // 초기 로드
   useEffect(() => {
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
-      fetchLogs('', 1);
+      fetchLogs('', 1, selectedTeam);
     }
-  }, [fetchLogs]);
+  }, [fetchLogs, selectedTeam]);
 
   // 검색어 변경 시 디바운싱 적용
   useEffect(() => {
@@ -98,7 +135,7 @@ const DownloadLogs = () => {
     searchTimeoutRef.current = setTimeout(() => {
       // 페이지는 1로 리셋하여 fetchLogs 호출
       skipPageEffect.current = true;
-      fetchLogs(searchQuery, 1);
+      fetchLogs(searchQuery, 1, selectedTeam);
     }, 300);
 
     return () => {
@@ -106,7 +143,7 @@ const DownloadLogs = () => {
         clearTimeout(searchTimeoutRef.current);
       }
     };
-  }, [searchQuery, fetchLogs]);
+  }, [searchQuery, selectedTeam, fetchLogs]);
 
   // 페이지 변경 시 (검색어 변경에 의한 것이 아닌 경우만)
   useEffect(() => {
@@ -121,8 +158,18 @@ const DownloadLogs = () => {
     }
 
     // 사용자가 직접 페이지를 변경한 경우
-    fetchLogs(searchQuery, pagination.page);
-  }, [pagination.page, searchQuery, fetchLogs]);
+    fetchLogs(searchQuery, pagination.page, selectedTeam);
+  }, [pagination.page, searchQuery, selectedTeam, fetchLogs]);
+
+  // 팀 필터 변경 시
+  useEffect(() => {
+    if (isInitialLoad.current) {
+      return;
+    }
+    skipPageEffect.current = true;
+    setPagination(prev => ({ ...prev, page: 1 }));
+    fetchLogs(searchQuery, 1, selectedTeam);
+  }, [selectedTeam, searchQuery, fetchLogs]);
 
   const formatDate = (dateString) => {
     if (!dateString) return '-';
@@ -217,20 +264,73 @@ const DownloadLogs = () => {
       <h1>Download Logs</h1>
 
       <div className="download-logs-controls">
-        <div className="search-container">
-          <svg className="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Search users"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+        <div className="search-and-filter-container">
+          <div className="search-container">
+            <svg className="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            <input
+              type="text"
+              className="search-input"
+              placeholder="사용자 이름, 사원번호, IP 주소 검색"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <select
+            className="team-filter-dropdown"
+            value={selectedTeam}
+            onChange={(e) => setSelectedTeam(e.target.value)}
+          >
+            <option value="all">전체 팀</option>
+            {teams.map(team => (
+              <option key={team} value={team}>
+                {team}
+              </option>
+            ))}
+          </select>
         </div>
-        <button onClick={() => fetchLogs(searchQuery, pagination.page)} className="btn-refresh">새로고침</button>
+        <button 
+          onClick={() => {
+            setIsRotating(true);
+            fetchLogs(searchQuery, pagination.page, selectedTeam);
+          }} 
+          className="btn-refresh" 
+          title="새로고침"
+          style={{
+            background: 'transparent',
+            backgroundColor: 'transparent',
+            backgroundImage: 'none',
+            border: 'none',
+            outline: 'none',
+            boxShadow: 'none'
+          }}
+          onMouseEnter={(e) => {
+            e.target.style.background = 'transparent';
+            e.target.style.backgroundColor = 'transparent';
+            e.target.style.backgroundImage = 'none';
+          }}
+          onMouseLeave={(e) => {
+            e.target.style.background = 'transparent';
+            e.target.style.backgroundColor = 'transparent';
+            e.target.style.backgroundImage = 'none';
+          }}
+        >
+          <svg 
+            className={`refresh-icon ${isRotating ? 'rotating' : ''}`}
+            onAnimationEnd={() => setIsRotating(false)}
+            width="20" 
+            height="20" 
+            viewBox="0 0 24 24" 
+            fill="none" 
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path d="M1 4V10H7" stroke="#003153" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M23 20V14H17" stroke="#003153" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14L18.36 18.36A9 9 0 0 1 3.51 15" stroke="#003153" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
       </div>
 
       <div className="logs-table-container">

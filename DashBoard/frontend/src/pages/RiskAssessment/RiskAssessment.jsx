@@ -17,6 +17,7 @@ const RiskAssessment = () => {
   const [mcpServers, setMcpServers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [serverFilter, setServerFilter] = useState('all'); // all, pending, approved
+  const [serverCounts, setServerCounts] = useState({ all: 0, pending: 0, approved: 0 }); // 각 탭별 서버 개수
   const [analyzingServers, setAnalyzingServers] = useState({}); // { serverId: true/false }
   const [analysisProgressServers, setAnalysisProgressServers] = useState({}); // { serverId: progress }
   const [scanErrors, setScanErrors] = useState({}); // { serverId: errorMessage }
@@ -33,7 +34,7 @@ const RiskAssessment = () => {
   const [showMcpInfoModal, setShowMcpInfoModal] = useState(false);
   const [packagesData, setPackagesData] = useState([]);
   const [toolValidationReport, setToolValidationReport] = useState(null); // Tool Validation 리포트 데이터 (tool 정보 포함)
-  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0, limit: 20 });
+  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0, limit: 8 });
 
   // 상태 뱃지 표시 함수
   const getStatusBadge = (status) => {
@@ -544,7 +545,16 @@ const RiskAssessment = () => {
         });
         const data = await res.json();
         if (data.success) {
-          setMcpServers(data.data || []);
+          const servers = data.data || [];
+          setMcpServers(servers);
+          
+          // 현재 필터에 맞는 개수 업데이트
+          const filteredCount = servers.filter(s => s.status !== 'rejected').length;
+          setServerCounts(prev => ({
+            ...prev,
+            [serverFilter === 'all' ? 'all' : serverFilter]: filteredCount
+          }));
+          
           // 페이지 필터 변경 시 첫 페이지로 리셋
           setPagination(prev => ({ ...prev, page: 1 }));
         }
@@ -557,6 +567,51 @@ const RiskAssessment = () => {
       loadMcpServers();
     }
   }, [viewMode, serverFilter]);
+
+  // 각 탭별 서버 개수 가져오기
+  useEffect(() => {
+    const fetchServerCounts = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        
+        // 각 상태별로 서버 개수 가져오기
+        const [allRes, pendingRes, approvedRes] = await Promise.all([
+          fetch(`http://localhost:3001/api/marketplace?status=all&limit=10000`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          fetch(`http://localhost:3001/api/marketplace?status=pending&limit=10000`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          fetch(`http://localhost:3001/api/marketplace?status=approved&limit=10000`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+        ]);
+        
+        const [allData, pendingData, approvedData] = await Promise.all([
+          allRes.json(),
+          pendingRes.json(),
+          approvedRes.json()
+        ]);
+        
+        // 거부된 서버 제외하고 개수 계산
+        const allCount = (allData.success ? (allData.data || []).filter(s => s.status !== 'rejected').length : 0);
+        const pendingCount = (pendingData.success ? (pendingData.data || []).filter(s => s.status !== 'rejected').length : 0);
+        const approvedCount = (approvedData.success ? (approvedData.data || []).filter(s => s.status !== 'rejected').length : 0);
+        
+        setServerCounts({
+          all: allCount,
+          pending: pendingCount,
+          approved: approvedCount
+        });
+      } catch (error) {
+        console.error('서버 개수 조회 실패:', error);
+      }
+    };
+    
+    if (viewMode === 'list') {
+      fetchServerCounts();
+    }
+  }, [viewMode]);
 
   // 검색어 변경 시 첫 페이지로 리셋
   useEffect(() => {
@@ -1157,6 +1212,7 @@ const RiskAssessment = () => {
                   </th>
                   {selectedTab === 'Code Vulnerabilities' ? (
                     <>
+                      <th>CWE</th>
                       <th>Language</th>
                       <th>Vulnerable package</th>
                       <th>상세보기</th>
@@ -1190,7 +1246,7 @@ const RiskAssessment = () => {
           <tbody>
             {issues.length === 0 ? (
               <tr>
-                <td colSpan={selectedTab === 'OSS Vulnerabilities' ? 9 : 5} style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                <td colSpan={selectedTab === 'OSS Vulnerabilities' ? 9 : (selectedTab === 'Code Vulnerabilities' ? 6 : 5)} style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
                   데이터가 없습니다.
                 </td>
               </tr>
@@ -1236,6 +1292,11 @@ const RiskAssessment = () => {
                           {severity || 'unknown'}
                         </span>
                       </td>
+                      {selectedTab === 'Code Vulnerabilities' && (
+                        <td>
+                          {issue.cwe || '-'}
+                        </td>
+                      )}
                       <td>
                         {selectedTab === 'Total Vulnerabilities' ? (
                           <span style={{
@@ -1575,8 +1636,9 @@ const RiskAssessment = () => {
 
   // 리스트 뷰 렌더링
   const renderListView = () => {
-    // 서버 필터링은 백엔드에서 처리되므로, 검색어만 클라이언트에서 필터링
+    // 거부된 서버는 제외하고, 검색어로 필터링
     let filteredServers = mcpServers.filter(server => 
+      server.status !== 'rejected' && 
       server.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
@@ -1626,12 +1688,12 @@ const RiskAssessment = () => {
 
     return (
       <div className="risk-assessment-container">
-        <div className="risk-assessment-left" style={{ padding: '25px', minHeight: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+        <div className="risk-assessment-left" style={{ padding: '24px', minHeight: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
           <div className="risk-assessment-header" style={{ flexShrink: 0, padding: '0 0 8px 0', marginBottom: '8px', borderBottom: '1px solid var(--divider)' }}>
             <h1 style={{ margin: '0 0 8px 0' }}>Risk Assessment</h1>
           </div>
 
-          <section className="list-page__controls-row" style={{ flexShrink: 0, marginTop: '8px' }}>
+          <section className="list-page__controls-row" style={{ flexShrink: 0, marginTop: '0px' }}>
             <div className="list-page__header">
               <div>
                 <h2>MCP Server List</h2>
@@ -1642,21 +1704,21 @@ const RiskAssessment = () => {
                   onClick={() => setServerFilter('all')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
-                  전체 서버
+                  전체 서버 ({serverCounts.all})
                 </button>
                 <button
                   className={`request-board-tab ${serverFilter === 'pending' ? 'active' : ''}`}
                   onClick={() => setServerFilter('pending')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
-                  대기중인 서버
+                  대기중인 서버 ({serverCounts.pending})
                 </button>
                 <button
                   className={`request-board-tab ${serverFilter === 'approved' ? 'active' : ''}`}
                   onClick={() => setServerFilter('approved')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
-                  승인된 서버
+                  승인된 서버 ({serverCounts.approved})
                 </button>
               </div>
             </div>
@@ -1669,7 +1731,7 @@ const RiskAssessment = () => {
                 <input
                   type="text"
                   className="search-input"
-                  placeholder="Search servers"
+                  placeholder="Search Servers"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -1677,28 +1739,24 @@ const RiskAssessment = () => {
             </div>
           </section>
 
-          <div className="table-wrapper" style={{ flex: 1, overflowY: 'auto', minHeight: 0, marginTop: '24px', marginBottom: '16px' }}>
+          <div className="table-wrapper" style={{ flex: 1, overflowY: 'hidden', minHeight: 0, marginTop: '0px', marginBottom: '12px' }}>
             <table className="requests-table">
               <thead>
                 <tr>
                   <th>MCP 서버</th>
                   <th>상태</th>
-                  <th>패키지</th>
-                  <th>취약점</th>
-                  <th>도달 가능</th>
-                  <th>위험도</th>
                   <th className="sortable" onClick={() => handleSort('analysis_timestamp')} style={{ cursor: 'pointer', userSelect: 'none', position: 'relative', paddingRight: '24px' }}>
                     분석 시간
                     {getSortIcon('analysis_timestamp')}
                   </th>
                   <th>Run Analysis</th>
-                  <th></th>
+                  <th>작업</th>
                 </tr>
               </thead>
               <tbody>
                 {paginatedServers.length === 0 ? (
                   <tr>
-                    <td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                    <td colSpan="5" style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
                       {searchTerm ? '검색 결과가 없습니다.' : 'MCP 서버가 없습니다.'}
                     </td>
                   </tr>
@@ -1723,14 +1781,6 @@ const RiskAssessment = () => {
                         <td>
                           {getStatusBadge(server.status)}
                         </td>
-                        <td className="system-row__packages">
-                          {server.package_count !== undefined && server.package_count !== null ? server.package_count : 0}
-                        </td>
-                        <td className="system-row__vulns">
-                          {server.code_vulnerability_count !== undefined && server.code_vulnerability_count !== null ? server.code_vulnerability_count : 0}
-                        </td>
-                        <td className="system-row__reachable">-</td>
-                        <td className="system-row__risk">-</td>
                         <td className="system-row__timestamp">
                           {server.analysis_timestamp 
                             ? (() => {
@@ -1828,11 +1878,6 @@ const RiskAssessment = () => {
                             <button
                               className="btn-refresh"
                               onClick={() => handleServerAnalysis(server)}
-                              style={{ 
-                                padding: '6px 12px', 
-                                fontSize: '0.85rem',
-                                width: '100%'
-                              }}
                             >
                               Run Analysis
                             </button>
@@ -1840,7 +1885,7 @@ const RiskAssessment = () => {
                         </td>
                         <td className="system-row__link">
                           <button 
-                            className="btn btn--ghost"
+                            className="btn-view-detail"
                             onClick={async () => {
                               const scanPath = server.github_link || server.file_path;
                               if (!scanPath) {
@@ -1973,7 +2018,7 @@ const RiskAssessment = () => {
                               }
                             }}
                           >
-                            View
+                            상세보기
                           </button>
                         </td>
                       </tr>
@@ -3352,104 +3397,133 @@ const RiskAssessment = () => {
                   </section>
                 </>
               ) : (
-                // Code Vulnerabilities 상세보기 (기존)
+                // Code Vulnerabilities 상세보기 (OSS 스타일)
                 <>
-              <div className="vulnerability-info">
-                <div className="info-section" style={{ flexWrap: 'wrap', gap: '16px' }}>
-                  <div className="severity-box" style={{ 
-                    backgroundColor: (() => {
-                      const severity = (selectedIssue.severity || 'unknown').toLowerCase();
-                      if (severity === 'high') return '#dc3545';
-                      if (severity === 'medium') return '#ffc107';
-                      if (severity === 'low') return '#17a2b8';
-                      if (severity === 'info') return '#6c757d';
-                      return '#6c757d';
-                    })()
-                  }}>
-                    {(selectedIssue.severity || 'unknown').toUpperCase()}
-                  </div>
-                  <div className="info-item" style={{ flex: '1', minWidth: '200px' }}>
-                    <strong>Rule ID</strong>
-                    <code>{selectedIssue.rule_id || 'N/A'}</code>
-                  </div>
-                  {selectedIssue.file && (
-                    <div className="info-item" style={{ flex: '1 1 100%', minWidth: '200px' }}>
-                      <strong>File</strong>
-                      <code style={{ display: 'block', marginTop: '4px' }}>{selectedIssue.file}</code>
+                  <section className="oss-detail-drawer__section">
+                    <h3>Vulnerability Information</h3>
+                    <div className="oss-detail-drawer__info-grid">
+                      <div className="oss-detail-drawer__info-item">
+                        <span className="oss-detail-drawer__info-label">Severity</span>
+                        <span className="oss-detail-drawer__info-value">
+                          <span className={`severity-pill severity-pill--${(selectedIssue.severity || 'unknown').toLowerCase()}`}>
+                            {(selectedIssue.severity || 'unknown').toUpperCase()}
+                          </span>
+                        </span>
+                      </div>
+                      {selectedIssue.rule_id && (
+                        <div className="oss-detail-drawer__info-item">
+                          <span className="oss-detail-drawer__info-label">Rule ID</span>
+                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace' }}>
+                            {selectedIssue.rule_id}
+                          </span>
+                        </div>
+                      )}
+                      {selectedIssue.file && (
+                        <div className="oss-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
+                          <span className="oss-detail-drawer__info-label">File</span>
+                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                            {selectedIssue.file}
+                          </span>
+                        </div>
+                      )}
+                      {selectedIssue.line && (
+                        <div className="oss-detail-drawer__info-item">
+                          <span className="oss-detail-drawer__info-label">Line</span>
+                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace' }}>
+                            {selectedIssue.line}{selectedIssue.column && ` (Column: ${selectedIssue.column})`}
+                          </span>
+                        </div>
+                      )}
+                      {selectedIssue.language && (
+                        <div className="oss-detail-drawer__info-item">
+                          <span className="oss-detail-drawer__info-label">Language</span>
+                          <span className="oss-detail-drawer__info-value">
+                            {selectedIssue.language}
+                          </span>
+                        </div>
+                      )}
+                      {selectedIssue.pattern_type && (
+                        <div className="oss-detail-drawer__info-item">
+                          <span className="oss-detail-drawer__info-label">Pattern Type</span>
+                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace' }}>
+                            {selectedIssue.pattern_type}
+                          </span>
+                        </div>
+                      )}
+                      {selectedIssue.pattern && (
+                        <div className="oss-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
+                          <span className="oss-detail-drawer__info-label">Pattern</span>
+                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                            {selectedIssue.pattern}
+                          </span>
+                        </div>
+                      )}
+                      {selectedIssue.cwe && (
+                        <div className="oss-detail-drawer__info-item">
+                          <span className="oss-detail-drawer__info-label">CWE</span>
+                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace' }}>
+                            {selectedIssue.cwe}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  {selectedIssue.line && (
-                    <div className="info-item" style={{ flex: '1', minWidth: '150px' }}>
-                      <strong>Line</strong>
-                      <code>{selectedIssue.line}{selectedIssue.column && ` (Column: ${selectedIssue.column})`}</code>
-                    </div>
-                  )}
-                </div>
+                    
+                    {(selectedIssue.description || selectedIssue.message) && (
+                      <div className="oss-detail-drawer__description-info">
+                        <div className="oss-detail-drawer__info-item oss-detail-drawer__info-item--description">
+                          <span className="oss-detail-drawer__info-label">Description</span>
+                          <div className="oss-detail-drawer__info-value">
+                            {selectedIssue.description || selectedIssue.message || 'No description available'}
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
-                <div className="description-box">
-                  <strong>Description</strong>
-                  <p>{selectedIssue.description || selectedIssue.message || 'No description available'}</p>
-                </div>
+                    {selectedIssue.code_snippet && (
+                      <div className="oss-detail-drawer__info-item" style={{ gridColumn: '1 / -1', marginTop: '8px' }}>
+                        <span className="oss-detail-drawer__info-label">Code Snippet</span>
+                        <pre style={{
+                          background: '#f5f5f5',
+                          padding: '16px',
+                          borderRadius: '8px',
+                          overflow: 'auto',
+                          fontSize: '0.85rem',
+                          marginTop: '8px',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          maxHeight: '400px',
+                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                          lineHeight: '1.5',
+                          border: '1px solid #e0e0e0',
+                          color: '#333'
+                        }}>
+                          {selectedIssue.code_snippet}
+                        </pre>
+                      </div>
+                    )}
+                  </section>
 
-                {selectedIssue.cwe && (
-                  <div className="description-box">
-                    <strong>CWE</strong>
-                    <p>{selectedIssue.cwe}</p>
-                  </div>
-                )}
-
-                {selectedIssue.code_snippet && (
-                  <div className="description-box" style={{ marginTop: '16px' }}>
-                    <strong>Code Snippet</strong>
-                    <pre className="code-snippet">
-                      {selectedIssue.code_snippet}
-                    </pre>
-                  </div>
-                )}
-
-                <div className="info-section" style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  {selectedIssue.pattern_type && (
-                    <div className="info-item">
-                      <strong>Pattern Type</strong>
-                      <code>{selectedIssue.pattern_type}</code>
-                    </div>
+                  {selectedIssue.rawFinding && (
+                    <section className="oss-detail-drawer__section">
+                      <h3>Raw Finding Data</h3>
+                      <pre style={{
+                        background: '#f5f5f5',
+                        padding: '16px',
+                        borderRadius: '8px',
+                        overflow: 'auto',
+                        fontSize: '0.8rem',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                        maxHeight: '400px',
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                        lineHeight: '1.5',
+                        border: '1px solid #e0e0e0',
+                        color: '#333'
+                      }}>
+                        {JSON.stringify(selectedIssue.rawFinding, null, 2)}
+                      </pre>
+                    </section>
                   )}
-                  {selectedIssue.pattern && (
-                    <div className="info-item">
-                      <strong>Pattern</strong>
-                      <code>{selectedIssue.pattern}</code>
-                    </div>
-                  )}
-                  {selectedIssue.language && (
-                    <div className="info-item">
-                      <strong>Language</strong>
-                      <code>{selectedIssue.language}</code>
-                    </div>
-                  )}
-              </div>
-
-              {selectedIssue.rawFinding && (
-                <div className="description-box" style={{ marginTop: '24px' }}>
-                  <strong>Raw Finding Data</strong>
-                  <pre style={{
-                    background: '#f5f5f5',
-                    padding: '16px',
-                    borderRadius: '6px',
-                    overflow: 'auto',
-                    fontSize: '0.8rem',
-                    marginTop: '12px',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    maxHeight: '400px',
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                    lineHeight: '1.5',
-                    border: '1px solid #e0e0e0'
-                  }}>
-                    {JSON.stringify(selectedIssue.rawFinding, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </div>
                 </>
               )}
               </div>

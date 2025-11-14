@@ -206,7 +206,7 @@ const Dashboard = () => {
                         type="number"
                         stroke="#666"
                         tick={{ fontSize: '0.75rem', fill: '#666' }}
-                      />
+                        />
                       <YAxis 
                         type="category"
                         dataKey="server_name"
@@ -228,7 +228,7 @@ const Dashboard = () => {
                 ) : (
                   <div className="no-data">데이터가 없습니다</div>
                 )}
-              </div>
+                </div>
               </div>
 
             {/* 가장 오래된 스캔 일시 보유 서버 Top 10 (테이블) */}
@@ -290,8 +290,8 @@ const Dashboard = () => {
                           border: '1px solid #e0e0e0',
                           borderRadius: '8px',
                           padding: '12px'
-                        }}
-                      />
+                          }}
+                        />
                       <Bar dataKey="download_count" fill="#10b981" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -327,7 +327,7 @@ const Dashboard = () => {
                             </span>
                           </td>
                         </tr>
-                      ))}
+                  ))}
                     </tbody>
                   </table>
                 ) : (
@@ -341,7 +341,7 @@ const Dashboard = () => {
           <div className="dashboard-content-grid">
             {/* 애플리케이션별 MCP 서버 트래픽(스택 영역) */}
             <div className="content-card stacked-chart-card">
-              <h3>애플리케이션별 MCP 서버 트래픽</h3>
+              <h3>애플리케이션별 MCP 서버 트래픽 Top 5</h3>
               <div className="stacked-area-chart-container">
                 {trafficByAppStacked.length > 0 && appNames.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
@@ -409,7 +409,7 @@ const Dashboard = () => {
                           const color = colors[originalIndex % colors.length];
                           // 선택된 앱이 없으면 모두 불투명, 선택된 앱이 있으면 선택된 것만 불투명, 나머지는 완전히 투명
                           const opacity = selectedApp === null ? 1 : (selectedApp === appName ? 1 : 0);
-                          return (
+                        return (
                             <Area 
                               key={appName}
                               type="monotone" 
@@ -428,7 +428,7 @@ const Dashboard = () => {
                       })()}
                     </AreaChart>
                   </ResponsiveContainer>
-                ) : (
+              ) : (
                   <div className="no-data">데이터가 없습니다</div>
               )}
             </div>
@@ -460,8 +460,8 @@ const Dashboard = () => {
                           border: '1px solid #e0e0e0',
                           borderRadius: '8px',
                           padding: '12px'
-                        }}
-                      />
+                          }}
+                        />
                       <Bar dataKey="usage_count" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>

@@ -122,19 +122,30 @@ const fileController = {
   // 다운로드 로그 조회 (관리자용)
   getDownloadLogs: (req, res) => {
     try {
-      const { username, page = 1, limit = 20 } = req.query;
+      const { username, query, team, page = 1, limit = 20 } = req.query;
       const pageNum = parseInt(page);
       const limitNum = parseInt(limit);
       const offset = (pageNum - 1) * limitNum;
+      
+      // query 파라미터가 있으면 그것을 사용하고, 없으면 username 파라미터 사용 (하위 호환성)
+      const searchTerm = query || username;
       
       let countQuery = 'SELECT COUNT(*) as total FROM download_logs dl LEFT JOIN users u ON dl.user_id = u.id WHERE 1=1';
       let dataQuery = 'SELECT dl.*, u.username, u.employee_id, u.team, ms.name as mcp_server_name FROM download_logs dl LEFT JOIN users u ON dl.user_id = u.id LEFT JOIN mcp_servers ms ON dl.mcp_server_id = ms.id WHERE 1=1';
       const params = [];
       
-      if (username) {
-        countQuery += ' AND u.username LIKE ?';
-        dataQuery += ' AND u.username LIKE ?';
-        params.push(`%${username}%`);
+      if (searchTerm) {
+        // 사용자 이름, 사원번호, IP 주소 모두에서 검색
+        countQuery += ' AND (u.username LIKE ? OR u.employee_id LIKE ? OR dl.ip_address LIKE ?)';
+        dataQuery += ' AND (u.username LIKE ? OR u.employee_id LIKE ? OR dl.ip_address LIKE ?)';
+        const searchPattern = `%${searchTerm}%`;
+        params.push(searchPattern, searchPattern, searchPattern);
+      }
+      
+      if (team && team !== 'all') {
+        countQuery += ' AND u.team = ?';
+        dataQuery += ' AND u.team = ?';
+        params.push(team);
       }
       
       dataQuery += ' ORDER BY dl.downloaded_at DESC LIMIT ? OFFSET ?';

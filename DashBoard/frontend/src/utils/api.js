@@ -264,6 +264,82 @@ export async function apiDelete(url, options = {}) {
   }
 }
 
+/**
+ * POST 요청 (FormData)
+ */
+export async function apiPostForm(url, formData, options = {}) {
+  try {
+    const token = getToken();
+    const fullUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
+    
+    const response = await fetch(fullUrl, {
+      method: 'POST',
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+        ...options.headers
+      },
+      body: formData,
+      ...options
+    });
+
+    // 응답이 성공적이지 않은 경우
+    if (!response.ok) {
+      let errorMessage = getStatusErrorMessage(response.status, response.statusText, fullUrl);
+      
+      // 응답 본문에서 에러 메시지 추출 시도
+      try {
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const errorData = await response.json();
+          if (errorData.message) {
+            errorMessage = errorData.message;
+          } else if (errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } else {
+          const text = await response.text();
+          if (text) {
+            errorMessage += `\n\n서버 응답: ${text.substring(0, 500)}`;
+          }
+        }
+      } catch (parseError) {
+        console.warn('응답 본문 파싱 실패:', parseError);
+      }
+
+      // 401 Unauthorized: 토큰 만료 또는 유효하지 않음
+      if (response.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      }
+
+      const apiError = new Error(errorMessage);
+      apiError.status = response.status;
+      apiError.statusText = response.statusText;
+      apiError.url = fullUrl;
+      throw apiError;
+    }
+
+    // 응답이 JSON인지 확인
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      const text = await response.text();
+      const error = new Error(
+        `서버가 JSON 형식이 아닌 응답을 반환했습니다.\n\n` +
+        `응답 내용: ${text.substring(0, 500)}\n` +
+        `Content-Type: ${contentType || '없음'}`
+      );
+      error.status = response.status;
+      error.responseText = text;
+      throw error;
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('[API POST Form] 오류:', error);
+    throw error;
+  }
+}
+
 // 내부 함수 export (필요시 사용)
 export { getToken, getHeaders };
 

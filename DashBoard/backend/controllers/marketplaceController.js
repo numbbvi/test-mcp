@@ -138,11 +138,11 @@ const marketplaceController = {
               if (codeVulnCount && codeVulnCount.count > 0) {
                 code_vulnerability_count = codeVulnCount.count;
                 
-                // 최신 scan_timestamp 조회
+            // 최신 scan_timestamp 조회
                 const latestScanStmt = db.prepare(`
-                  SELECT MAX(scan_timestamp) as latest_timestamp 
-                  FROM code_vulnerabilities 
-                  WHERE scan_path = ?
+              SELECT MAX(scan_timestamp) as latest_timestamp 
+              FROM code_vulnerabilities 
+              WHERE scan_path = ?
                 `);
                 const latestScan = latestScanStmt.get(scanPath);
                 if (latestScan && latestScan.latest_timestamp) {
@@ -191,8 +191,8 @@ const marketplaceController = {
                     WHERE scan_path LIKE ?
                   `);
                   const latestScan = latestScanStmt.get(likePattern);
-                  if (latestScan && latestScan.latest_timestamp) {
-                    analysis_timestamp = latestScan.latest_timestamp;
+            if (latestScan && latestScan.latest_timestamp) {
+              analysis_timestamp = latestScan.latest_timestamp;
                   }
                 }
                 

@@ -72,7 +72,13 @@ def main():
             results = manager.scan_repository_full(args.path)
         
         # 출력 파일 이름 결정
-        output_name = args.output if args.output else "finding"
+        if args.output:
+            output_name = args.output
+        else:
+            # 저장소 이름 자동 추출
+            from scanner.analyzers.common.utils import extract_repo_name
+            output_name = extract_repo_name(args.path)
+        
         # 파일명에 특수문자 제거 및 안전한 이름으로 변환
         safe_output_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in output_name)
         

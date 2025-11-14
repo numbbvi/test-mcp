@@ -13,15 +13,15 @@ const Pagination = ({ currentPage, totalPages, onPageChange, totalItems, itemsPe
 
   return (
     <div className="pagination-wrapper">
-      <div className="pagination">
-        <button
+    <div className="pagination">
+      <button
           className="pagination-btn pagination-btn-icon"
           onClick={() => onPageChange(1)}
-          disabled={currentPage === 1}
+        disabled={currentPage === 1}
           title="첫 페이지"
-        >
+      >
           «
-        </button>
+      </button>
         <button
           className="pagination-btn pagination-btn-icon"
           onClick={() => onPageChange(currentPage - 1)}
@@ -33,10 +33,10 @@ const Pagination = ({ currentPage, totalPages, onPageChange, totalItems, itemsPe
         <span className="pagination-info">
           Page {currentPage} of {totalPages}
         </span>
-        <button
+      <button
           className="pagination-btn pagination-btn-icon"
-          onClick={() => onPageChange(currentPage + 1)}
-          disabled={currentPage === totalPages}
+        onClick={() => onPageChange(currentPage + 1)}
+        disabled={currentPage === totalPages}
           title="다음 페이지"
         >
           ›
@@ -48,7 +48,7 @@ const Pagination = ({ currentPage, totalPages, onPageChange, totalItems, itemsPe
           title="마지막 페이지"
         >
           »
-        </button>
+      </button>
       </div>
     </div>
   );

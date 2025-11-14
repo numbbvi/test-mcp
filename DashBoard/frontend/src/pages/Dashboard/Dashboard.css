@@ -684,6 +684,11 @@
   white-space: nowrap;
 }
 
+.detection-table th:first-child {
+  min-width: 180px;
+  width: 180px;
+}
+
 .detection-table th:last-child {
   border-right: none;
 }
@@ -694,6 +699,12 @@
   border-right: 1.5px solid rgba(240, 240, 240, 0.5);
   color: #333;
   background: #ffffff;
+}
+
+.detection-table td:first-child {
+  white-space: nowrap;
+  min-width: 180px;
+  width: 180px;
 }
 
 .detection-table td:last-child {
