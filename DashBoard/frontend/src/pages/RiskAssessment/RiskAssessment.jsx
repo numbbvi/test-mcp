@@ -19,6 +19,7 @@ const RiskAssessment = () => {
   const [mcpServers, setMcpServers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [serverFilter, setServerFilter] = useState('all'); // all, pending, approved
+  const [serverCounts, setServerCounts] = useState({ all: 0, pending: 0, approved: 0 });
   const [analyzingServers, setAnalyzingServers] = useState({}); // { serverId: true/false }
   const [analysisProgressServers, setAnalysisProgressServers] = useState({}); // { serverId: progress }
   const [scanErrors, setScanErrors] = useState({}); // { serverId: errorMessage }
@@ -537,6 +538,46 @@ const RiskAssessment = () => {
     }
   };
 
+  // 서버 개수 조회
+  useEffect(() => {
+    const fetchServerCounts = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        
+        // 각 상태별로 개수 조회
+        const [allRes, pendingRes, approvedRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/marketplace?status=all&limit=1`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          fetch(`${API_BASE_URL}/marketplace?status=pending&limit=1`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          fetch(`${API_BASE_URL}/marketplace?status=approved&limit=1`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+        ]);
+        
+        const [allData, pendingData, approvedData] = await Promise.all([
+          allRes.json(),
+          pendingRes.json(),
+          approvedRes.json()
+        ]);
+        
+        setServerCounts({
+          all: allData.success ? (allData.pagination?.total || allData.data?.length || 0) : 0,
+          pending: pendingData.success ? (pendingData.pagination?.total || pendingData.data?.length || 0) : 0,
+          approved: approvedData.success ? (approvedData.pagination?.total || approvedData.data?.length || 0) : 0
+        });
+      } catch (error) {
+        console.error('서버 개수 조회 실패:', error);
+      }
+    };
+    
+    if (viewMode === 'list') {
+      fetchServerCounts();
+    }
+  }, [viewMode]);
+
   // MCP 서버 목록 로드 (필터 변경 시 실시간으로 가져오기)
   useEffect(() => {
     const loadMcpServers = async () => {
@@ -566,6 +607,13 @@ const RiskAssessment = () => {
           setMcpServers(data.data || []);
           // 페이지 필터 변경 시 첫 페이지로 리셋
           setPagination(prev => ({ ...prev, page: 1 }));
+          
+          // 서버 개수도 업데이트
+          const count = data.pagination?.total || data.data?.length || 0;
+          setServerCounts(prev => ({
+            ...prev,
+            [serverFilter]: count
+          }));
         }
       } catch (error) {
         console.error('MCP 서버 목록 로드 실패:', error);
@@ -2978,7 +3026,7 @@ const RiskAssessment = () => {
             <h1 style={{ margin: '0 0 8px 0' }}>Risk Assessment</h1>
           </div>
 
-          <section className="list-page__controls-row" style={{ flexShrink: 0, marginTop: '8px' }}>
+          <section className="list-page__controls-row" style={{ flexShrink: 0, marginTop: '0px' }}>
             <div className="list-page__header">
               <div>
                 <h2>MCP Server List</h2>
@@ -2989,21 +3037,21 @@ const RiskAssessment = () => {
                   onClick={() => setServerFilter('all')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
-                  전체 서버
+                  전체 서버 ({serverCounts.all})
                 </button>
                 <button
                   className={`request-board-tab ${serverFilter === 'pending' ? 'active' : ''}`}
                   onClick={() => setServerFilter('pending')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
-                  대기중인 서버
+                  대기중인 서버 ({serverCounts.pending})
                 </button>
                 <button
                   className={`request-board-tab ${serverFilter === 'approved' ? 'active' : ''}`}
                   onClick={() => setServerFilter('approved')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
-                  승인된 서버
+                  승인된 서버 ({serverCounts.approved})
                 </button>
               </div>
             </div>

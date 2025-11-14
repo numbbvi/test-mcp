@@ -29,10 +29,14 @@
   padding: 24px;
   background: #f5f6fb;
   min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 30px);
+  overflow: hidden;
 }
 
 .anomaly-detection-header {
-  margin-bottom: 32px;
+  margin-bottom: 24px;
 }
 
 .anomaly-detection-page h1 {
@@ -79,7 +83,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   gap: 12px;
 }
 
@@ -349,11 +353,16 @@
 }
 
 .anomaly-detection-logs-container {
-  margin-bottom: 24px;
+  margin: 0 0px 32px 0px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: visible;
 }
 
 .anomaly-detection-table-wrapper {
-  margin: 0 0px 32px 0px;
+  margin: 0;
   overflow-x: auto;
   overflow-y: auto;
   background: #f5f5f5;
@@ -361,9 +370,8 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   border: 1px solid #e0e0e0;
   flex: 1;
-  height: calc(100vh - 300px);
-  min-height: 600px;
-  max-height: calc(100vh - 300px);
+  min-height: 0;
+  padding-bottom: 32px !important;
 }
 
 .anomaly-detection-table {
@@ -461,21 +469,49 @@
   border-radius: 4px;
   font-size: 0.85rem;
   font-weight: 600;
+  color: #fff;
+}
+
+.severity-critical {
+  background: #d32f2f;
+  color: #fff;
 }
 
 .severity-high {
-  background: #ffebee;
-  color: #c62828;
+  background: #f57c00;
+  color: #fff;
 }
 
 .severity-medium {
-  background: #fff3e0;
-  color: #e65100;
+  background: #fbc02d;
+  color: #fff;
 }
 
 .severity-low {
-  background: #e8f5e9;
-  color: #2e7d32;
+  background: #388e3c;
+  color: #fff;
+}
+
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.status-pending {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.status-resolved {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-ignored {
+  background: #f8d7da;
+  color: #721c24;
 }
 
 .btn-view-detail {
@@ -694,6 +730,23 @@
   line-height: 1.6;
   white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+.anomaly-detection-detail-drawer__info-item.reason-item {
+  margin-top: 8px;
+}
+
+.anomaly-detection-detail-drawer__reason-value {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  word-break: break-word;
+  overflow-wrap: break-word;
+  margin-top: 8px;
 }
 
 

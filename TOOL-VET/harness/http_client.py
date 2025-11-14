@@ -9,7 +9,7 @@ import requests
 
 
 class HTTPMCPClient:
-    def __init__(self, base_url: str, timeout: float = 5.0, auth_token: Optional[str] = None):
+    def __init__(self, base_url: str, timeout: float = 30.0, auth_token: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.auth_token = auth_token

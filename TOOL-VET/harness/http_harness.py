@@ -15,7 +15,7 @@ def run_http_harness(
     auth_token: Optional[str] = None,
     predefined_tools: Optional[List[Dict[str, Any]]] = None,
 ) -> HarnessReport:
-    client = HTTPMCPClient(http_url, timeout=5.0, auth_token=auth_token)
+    client = HTTPMCPClient(http_url, timeout=30.0, auth_token=auth_token)
     tools: List[Dict[str, Any]] = []
     results: List[ToolCallResult] = []
 

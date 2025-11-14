@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { apiGet } from '../../utils/api';
 import './AnomalyDetection.css';
 
 const AnomalyDetection = () => {
@@ -7,6 +8,8 @@ const AnomalyDetection = () => {
   const [selectedLog, setSelectedLog] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedViolationType, setSelectedViolationType] = useState('all');
+  const [selectedStatus, setSelectedStatus] = useState('all'); // RBAC 탭용
+  const [selectedSeverity, setSelectedSeverity] = useState('all'); // RBAC 탭용
   const [violationTypes, setViolationTypes] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0 });
   const [sortColumn, setSortColumn] = useState(null);
@@ -38,13 +41,13 @@ const AnomalyDetection = () => {
 
   useEffect(() => {
     setPagination(prev => ({ ...prev, page: 1 }));
-  }, [searchQuery, selectedViolationType, filter]);
+  }, [searchQuery, selectedViolationType, filter, selectedStatus, selectedSeverity]);
 
   useEffect(() => {
     fetchLogs();
-  }, [pagination.page, filter]);
+  }, [pagination.page, filter, selectedStatus, selectedSeverity]);
 
-  // 실시간 업데이트를 위한 SSE 연결
+  // 실시간 업데이트를 위한 SSE 연결 (Dlp.jsx와 PermissionViolation.jsx 로직 통합)
   useEffect(() => {
     let eventSource = null;
     let reconnectTimeout = null;
@@ -56,7 +59,15 @@ const AnomalyDetection = () => {
           eventSource.close();
         }
 
-        eventSource = new EventSource('http://localhost:3001/api/dlp/logs/stream');
+        // 현재 탭에 따라 다른 SSE 엔드포인트 사용
+        if (filter === 'rbac') {
+          // RBAC 탭: Permission Violation SSE (PermissionViolation.jsx와 동일)
+          const token = localStorage.getItem('token');
+          eventSource = new EventSource(`http://localhost:3001/api/permission-violation/logs/stream?token=${token}`);
+        } else {
+          // DLP 탭: DLP SSE (Dlp.jsx와 동일)
+          eventSource = new EventSource('http://localhost:3001/api/dlp/logs/stream');
+        }
 
         eventSource.onmessage = (event) => {
           try {
@@ -113,42 +124,70 @@ const AnomalyDetection = () => {
         eventSource.close();
       }
     };
-  }, []); // 한 번만 연결
+  }, [filter]); // filter 변경 시 재연결
 
 
   const fetchLogs = async () => {
     try {
       setLoading(true);
       
-      const queryParams = new URLSearchParams();
-      queryParams.append('page', pagination.page);
-      queryParams.append('limit', '20');
-      // filter에 따라 DLP 또는 RBAC 로그 필터링 (백엔드에서 처리하도록)
+      // RBAC 탭일 때는 Permission Violation API 사용
       if (filter === 'rbac') {
-        queryParams.append('type', 'rbac');
-      } else {
-        queryParams.append('type', 'dlp');
-      }
+        const queryParams = new URLSearchParams();
+        queryParams.append('page', pagination.page);
+        queryParams.append('limit', '20');
+        if (selectedStatus && selectedStatus !== 'all') {
+          queryParams.append('status', selectedStatus);
+        }
+        if (selectedSeverity && selectedSeverity !== 'all') {
+          queryParams.append('severity', selectedSeverity);
+        }
 
-      const res = await fetch(`http://localhost:3001/api/dlp/logs?${queryParams}`);
-      const data = await res.json();
-      
-      if (data.success) {
-        const fetchedLogs = data.data || [];
-        setLogs(fetchedLogs);
+        const data = await apiGet(`/permission-violation/logs?${queryParams}`);
         
-        setPagination(prev => ({
-          ...prev,
-          total: fetchedLogs.length || 0,
-          totalPages: Math.ceil((fetchedLogs.length || 0) / 20) || 1
-        }));
+        if (data.success) {
+          const fetchedLogs = data.data || [];
+          setLogs(fetchedLogs);
+          
+          setPagination(prev => ({
+            ...prev,
+            total: data.pagination?.total || fetchedLogs.length || 0,
+            totalPages: data.pagination?.totalPages || Math.ceil((fetchedLogs.length || 0) / 20) || 1
+          }));
+        } else {
+          setLogs([]);
+          setPagination(prev => ({
+            ...prev,
+            total: 0,
+            totalPages: 1
+          }));
+        }
       } else {
-        setLogs([]);
-        setPagination(prev => ({
-          ...prev,
-          total: 0,
-          totalPages: 1
-        }));
+        // DLP 탭일 때는 기존 DLP API 사용 (Dlp.jsx와 동일)
+        const queryParams = new URLSearchParams();
+        queryParams.append('page', pagination.page);
+        queryParams.append('limit', '20');
+
+        const res = await fetch(`http://localhost:3001/api/dlp/logs?${queryParams}`);
+        const data = await res.json();
+        
+        if (data.success) {
+          const fetchedLogs = data.data || [];
+          setLogs(fetchedLogs);
+          
+          setPagination(prev => ({
+            ...prev,
+            total: fetchedLogs.length || 0,
+            totalPages: Math.ceil((fetchedLogs.length || 0) / 20) || 1
+          }));
+        } else {
+          setLogs([]);
+          setPagination(prev => ({
+            ...prev,
+            total: 0,
+            totalPages: 1
+          }));
+        }
       }
       
     } catch (error) {
@@ -177,6 +216,7 @@ const AnomalyDetection = () => {
 
   const getSeverityBadgeClass = (severity) => {
     switch (severity?.toLowerCase()) {
+      case 'critical': return 'severity-critical';
       case 'high': return 'severity-high';
       case 'medium': return 'severity-medium';
       case 'low': return 'severity-low';
@@ -186,14 +226,27 @@ const AnomalyDetection = () => {
 
   const getSeverityText = (severity) => {
     switch (severity?.toLowerCase()) {
-      case 'high': return '높음';
-      case 'medium': return '중간';
-      case 'low': return '낮음';
-      default: return severity || '알 수 없음';
+      case 'critical': return 'CRITICAL';
+      case 'high': return 'HIGH';
+      case 'medium': return 'MEDIUM';
+      case 'low': return 'LOW';
+      default: return severity?.toUpperCase() || '알 수 없음';
     }
   };
 
   const getViolationTypeText = (type) => {
+    if (filter === 'rbac') {
+      const rbacTypes = {
+        'unauthorized_access': '무단 접근',
+        'permission_denied': '권한 거부',
+        'tool_access_denied': '도구 접근 거부',
+        'server_access_denied': '서버 접근 거부',
+        'team_restriction': '팀 제한',
+        'tool_restriction': '도구 제한',
+        'server_restriction': '서버 제한'
+      };
+      return rbacTypes[type] || type || '알 수 없음';
+    }
     const types = {
       'personal_info': '개인정보',
       'financial_info': '금융정보',
@@ -202,6 +255,24 @@ const AnomalyDetection = () => {
       'data_transmission': '데이터 전송'
     };
     return types[type] || type || '알 수 없음';
+  };
+
+  const getStatusBadgeClass = (status) => {
+    switch (status?.toLowerCase()) {
+      case 'pending': return 'status-pending';
+      case 'resolved': return 'status-resolved';
+      case 'ignored': return 'status-ignored';
+      default: return 'status-pending';
+    }
+  };
+
+  const getStatusText = (status) => {
+    switch (status?.toLowerCase()) {
+      case 'pending': return '대기중';
+      case 'resolved': return '해결됨';
+      case 'ignored': return '무시됨';
+      default: return status || '알 수 없음';
+    }
   };
 
   const handleSort = (column) => {
@@ -224,17 +295,31 @@ const AnomalyDetection = () => {
     // 검색어 필터링
     if (searchQuery) {
       const searchLower = searchQuery.toLowerCase();
-      const matchesSearch = (
-        (log.username && log.username.toLowerCase().includes(searchLower)) ||
-        (log.employee_id && log.employee_id.toLowerCase().includes(searchLower)) ||
-        (log.source_ip && log.source_ip.toLowerCase().includes(searchLower)) ||
-        (log.violation_type && log.violation_type.toLowerCase().includes(searchLower))
-      );
-      if (!matchesSearch) return false;
+      if (filter === 'rbac') {
+        // RBAC 탭일 때는 더 많은 필드 검색
+        const matchesSearch = (
+          (log.username && log.username.toLowerCase().includes(searchLower)) ||
+          (log.employee_id && log.employee_id.toLowerCase().includes(searchLower)) ||
+          (log.source_ip && log.source_ip.toLowerCase().includes(searchLower)) ||
+          (log.mcp_server_name && log.mcp_server_name.toLowerCase().includes(searchLower)) ||
+          (log.tool_name && log.tool_name.toLowerCase().includes(searchLower)) ||
+          (log.violation_type && log.violation_type.toLowerCase().includes(searchLower))
+        );
+        if (!matchesSearch) return false;
+      } else {
+        // DLP 탭일 때는 기존 검색
+        const matchesSearch = (
+          (log.username && log.username.toLowerCase().includes(searchLower)) ||
+          (log.employee_id && log.employee_id.toLowerCase().includes(searchLower)) ||
+          (log.source_ip && log.source_ip.toLowerCase().includes(searchLower)) ||
+          (log.violation_type && log.violation_type.toLowerCase().includes(searchLower))
+        );
+        if (!matchesSearch) return false;
+      }
     }
     
-    // 위반 유형 필터링
-    if (selectedViolationType && selectedViolationType !== 'all') {
+    // 위반 유형 필터링 (DLP 탭일 때만)
+    if (filter === 'dlp' && selectedViolationType && selectedViolationType !== 'all') {
       if (log.violation_type !== selectedViolationType) return false;
     }
     
@@ -264,9 +349,9 @@ const AnomalyDetection = () => {
       }
     }
 
-    // 심각도 정렬 (high > medium > low)
+    // 심각도 정렬 (critical > high > medium > low)
     if (sortColumn === 'severity') {
-      const severityOrder = { 'high': 3, 'medium': 2, 'low': 1 };
+      const severityOrder = { 'critical': 4, 'high': 3, 'medium': 2, 'low': 1 };
       aValue = severityOrder[aValue?.toLowerCase()] || 0;
       bValue = severityOrder[bValue?.toLowerCase()] || 0;
       return sortDirection === 'asc' ? aValue - bValue : bValue - aValue;
@@ -365,6 +450,7 @@ const AnomalyDetection = () => {
     setSelectedLog(null);
   };
 
+
   // ESC 키로 상세보기 닫기
   useEffect(() => {
     if (!selectedLog) return;
@@ -381,33 +467,6 @@ const AnomalyDetection = () => {
     };
   }, [selectedLog]);
 
-  // 탭별 로그 개수 계산 (실제로는 백엔드에서 가져와야 함)
-  const [logCounts, setLogCounts] = useState({ dlp: 0, rbac: 0 });
-
-  useEffect(() => {
-    const fetchLogCounts = async () => {
-      try {
-        const [dlpRes, rbacRes] = await Promise.all([
-          fetch('http://localhost:3001/api/dlp/logs?type=dlp&limit=10000'),
-          fetch('http://localhost:3001/api/dlp/logs?type=rbac&limit=10000')
-        ]);
-        
-        const [dlpData, rbacData] = await Promise.all([
-          dlpRes.json(),
-          rbacRes.json()
-        ]);
-        
-        setLogCounts({
-          dlp: dlpData.success ? (dlpData.data?.length || 0) : 0,
-          rbac: rbacData.success ? (rbacData.data?.length || 0) : 0
-        });
-      } catch (error) {
-        console.error('로그 개수 조회 실패:', error);
-      }
-    };
-    
-    fetchLogCounts();
-  }, []);
 
   if (loading) {
     return <div className="anomaly-detection-loading">로딩 중...</div>;
@@ -420,18 +479,18 @@ const AnomalyDetection = () => {
           <div className="anomaly-detection-header">
       <h1>Anomaly Detection</h1>
       <div className="anomaly-detection-tabs">
-        <button 
-          className={`anomaly-detection-tab ${filter === 'dlp' ? 'active' : ''}`}
-          onClick={() => setFilter('dlp')}
-        >
-          DLP ({logCounts.dlp})
-        </button>
-        <button 
-          className={`anomaly-detection-tab ${filter === 'rbac' ? 'active' : ''}`}
-          onClick={() => setFilter('rbac')}
-        >
-          RBAC ({logCounts.rbac})
-        </button>
+                    <button
+                      className={`anomaly-detection-tab ${filter === 'dlp' ? 'active' : ''}`}
+                      onClick={() => setFilter('dlp')}
+                    >
+                      DLP
+                    </button>
+                    <button
+                      className={`anomaly-detection-tab ${filter === 'rbac' ? 'active' : ''}`}
+                      onClick={() => setFilter('rbac')}
+                    >
+                      RBAC
+                    </button>
       </div>
       </div>
 
@@ -445,23 +504,50 @@ const AnomalyDetection = () => {
             <input
               type="text"
               className="search-input"
-              placeholder="Search users"
+              placeholder={filter === 'rbac' ? "Search users, IP, server, tool..." : "Search users"}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
-          <select
-            className="violation-type-dropdown"
-            value={selectedViolationType}
-            onChange={(e) => setSelectedViolationType(e.target.value)}
-          >
-            <option value="all">전체 위반 유형</option>
-            {violationTypes.map(vt => (
-              <option key={vt.type} value={vt.type}>
-                {vt.type}
-              </option>
-            ))}
-          </select>
+          {filter === 'dlp' && (
+            <select
+              className="violation-type-dropdown"
+              value={selectedViolationType}
+              onChange={(e) => setSelectedViolationType(e.target.value)}
+            >
+              <option value="all">전체 위반 유형</option>
+              {violationTypes.map(vt => (
+                <option key={vt.type} value={vt.type}>
+                  {vt.type}
+                </option>
+              ))}
+            </select>
+          )}
+          {filter === 'rbac' && (
+            <>
+              <select
+                className="violation-type-dropdown"
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+              >
+                <option value="all">전체 상태</option>
+                <option value="pending">대기중</option>
+                <option value="resolved">해결됨</option>
+                <option value="ignored">무시됨</option>
+              </select>
+                        <select
+                          className="violation-type-dropdown"
+                          value={selectedSeverity}
+                          onChange={(e) => setSelectedSeverity(e.target.value)}
+                        >
+                          <option value="all">전체 심각도</option>
+                          <option value="critical">CRITICAL</option>
+                          <option value="high">HIGH</option>
+                          <option value="medium">MEDIUM</option>
+                          <option value="low">LOW</option>
+                        </select>
+            </>
+          )}
         </div>
         <button 
           onClick={() => {
@@ -493,23 +579,25 @@ const AnomalyDetection = () => {
             <thead>
               <tr>
                 <th className="sortable" onClick={() => handleSort('timestamp')}>
-                  탐지 시간
+                  {filter === 'rbac' ? '발생 시간' : '탐지 시간'}
                   {getSortIcon('timestamp')}
                 </th>
                 <th>사용자</th>
+                {filter === 'rbac' && <th>MCP 서버</th>}
+                {filter === 'rbac' && <th>도구</th>}
                 <th>위반 유형</th>
                 <th className="sortable" onClick={() => handleSort('severity')}>
                   심각도
                   {getSortIcon('severity')}
                 </th>
-                <th>내용</th>
+                {filter === 'dlp' && <th>내용</th>}
                 <th>작업</th>
               </tr>
             </thead>
             <tbody>
               {sortedLogs.length === 0 ? (
                 <tr>
-                  <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                  <td colSpan={filter === 'rbac' ? 7 : 6} style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
                     데이터가 없습니다.
                   </td>
                 </tr>
@@ -522,19 +610,23 @@ const AnomalyDetection = () => {
                   >
                     <td>{formatDate(log.timestamp)}</td>
                     <td>{log.username || log.employee_id || log.source_ip || '-'}</td>
+                    {filter === 'rbac' && <td>{log.mcp_server_name || '-'}</td>}
+                    {filter === 'rbac' && <td>{log.tool_name || '-'}</td>}
                     <td>{getViolationTypeText(log.violation_type)}</td>
                     <td>
                       <span className={`severity-badge ${getSeverityBadgeClass(log.severity)}`}>
                         {getSeverityText(log.severity)}
                       </span>
                     </td>
-                    <td className="content-cell">
-                      {log.original_text ? (
-                        <span className="content-preview">
-                          {log.original_text.substring(0, 50)}{log.original_text.length > 50 ? '...' : ''}
-                        </span>
-                      ) : '-'}
-                    </td>
+                    {filter === 'dlp' && (
+                      <td className="content-cell">
+                        {log.original_text ? (
+                          <span className="content-preview">
+                            {log.original_text.substring(0, 50)}{log.original_text.length > 50 ? '...' : ''}
+                          </span>
+                        ) : '-'}
+                      </td>
+                    )}
                     <td>
                       <button 
                         className="btn-view-detail"
@@ -581,40 +673,6 @@ const AnomalyDetection = () => {
               <section className="anomaly-detection-detail-drawer__section">
                 <h3>기본 정보</h3>
                 <div className="anomaly-detection-detail-drawer__info-grid">
-                  <div className="anomaly-detection-detail-drawer__info-item">
-                    <span className="anomaly-detection-detail-drawer__info-label">위반 ID</span>
-                    <span className="anomaly-detection-detail-drawer__info-value">{selectedLog.id}</span>
-                  </div>
-                  <div className="anomaly-detection-detail-drawer__info-item">
-                    <span className="anomaly-detection-detail-drawer__info-label">위반 유형</span>
-                    <span className="anomaly-detection-detail-drawer__info-value">{getViolationTypeText(selectedLog.violation_type)}</span>
-                  </div>
-                  <div className="anomaly-detection-detail-drawer__info-item">
-                    <span className="anomaly-detection-detail-drawer__info-label">심각도</span>
-                    <span className="anomaly-detection-detail-drawer__info-value">
-                      <span className={`severity-badge ${getSeverityBadgeClass(selectedLog.severity)}`}>
-                        {getSeverityText(selectedLog.severity)}
-                      </span>
-                    </span>
-                  </div>
-                  <div className="anomaly-detection-detail-drawer__info-item">
-                    <span className="anomaly-detection-detail-drawer__info-label">탐지 시간</span>
-                    <span className="anomaly-detection-detail-drawer__info-value">{formatDate(selectedLog.timestamp)}</span>
-                  </div>
-                  <div className="anomaly-detection-detail-drawer__info-item">
-                    <span className="anomaly-detection-detail-drawer__info-label">IP 주소</span>
-                    <span className="anomaly-detection-detail-drawer__info-value">{selectedLog.source_ip || '-'}</span>
-                  </div>
-                  <div className="anomaly-detection-detail-drawer__info-item">
-                    <span className="anomaly-detection-detail-drawer__info-label">액션 타입</span>
-                    <span className="anomaly-detection-detail-drawer__info-value">{selectedLog.action_type || '-'}</span>
-                  </div>
-                </div>
-              </section>
-
-              <section className="anomaly-detection-detail-drawer__section">
-                <h3>사용자 정보</h3>
-                <div className="anomaly-detection-detail-drawer__info-grid">
                   {selectedLog.userInfo ? (
                     <>
                       <div className="anomaly-detection-detail-drawer__info-item">
@@ -643,8 +701,65 @@ const AnomalyDetection = () => {
                       <span className="anomaly-detection-detail-drawer__info-value">IP 주소로 조회된 사용자 정보가 없습니다.</span>
                     </div>
                   )}
+                  <div className="anomaly-detection-detail-drawer__info-item">
+                    <span className="anomaly-detection-detail-drawer__info-label">IP 주소</span>
+                    <span className="anomaly-detection-detail-drawer__info-value">{selectedLog.source_ip || '-'}</span>
+                  </div>
+                  <div className="anomaly-detection-detail-drawer__info-item">
+                    <span className="anomaly-detection-detail-drawer__info-label">탐지 시간</span>
+                    <span className="anomaly-detection-detail-drawer__info-value">{formatDate(selectedLog.timestamp)}</span>
+                  </div>
+                  {filter === 'dlp' && (
+                    <div className="anomaly-detection-detail-drawer__info-item">
+                      <span className="anomaly-detection-detail-drawer__info-label">액션 타입</span>
+                      <span className="anomaly-detection-detail-drawer__info-value">{selectedLog.action_type || '-'}</span>
+                    </div>
+                  )}
                 </div>
               </section>
+
+              <section className="anomaly-detection-detail-drawer__section">
+                <h3>위반 정보</h3>
+                <div className="anomaly-detection-detail-drawer__info-grid">
+                  <div className="anomaly-detection-detail-drawer__info-item">
+                    <span className="anomaly-detection-detail-drawer__info-label">위반 ID</span>
+                    <span className="anomaly-detection-detail-drawer__info-value">{selectedLog.id}</span>
+                  </div>
+                  {filter === 'rbac' && (
+                    <>
+                      <div className="anomaly-detection-detail-drawer__info-item">
+                        <span className="anomaly-detection-detail-drawer__info-label">MCP 서버</span>
+                        <span className="anomaly-detection-detail-drawer__info-value">{selectedLog.mcp_server_name || '-'}</span>
+                      </div>
+                      <div className="anomaly-detection-detail-drawer__info-item">
+                        <span className="anomaly-detection-detail-drawer__info-label">Tool</span>
+                        <span className="anomaly-detection-detail-drawer__info-value">{selectedLog.tool_name || '-'}</span>
+                      </div>
+                    </>
+                  )}
+                  <div className="anomaly-detection-detail-drawer__info-item">
+                    <span className="anomaly-detection-detail-drawer__info-label">위반 유형</span>
+                    <span className="anomaly-detection-detail-drawer__info-value">{getViolationTypeText(selectedLog.violation_type)}</span>
+                  </div>
+                  <div className="anomaly-detection-detail-drawer__info-item">
+                    <span className="anomaly-detection-detail-drawer__info-label">심각도</span>
+                    <span className="anomaly-detection-detail-drawer__info-value">
+                      <span className={`severity-badge ${getSeverityBadgeClass(selectedLog.severity)}`}>
+                        {getSeverityText(selectedLog.severity)}
+                      </span>
+                    </span>
+                  </div>
+                  {filter === 'rbac' && selectedLog.reason && (
+                    <div className="anomaly-detection-detail-drawer__info-item reason-item" style={{ gridColumn: '1 / -1' }}>
+                      <span className="anomaly-detection-detail-drawer__info-label">사유</span>
+                      <div className="anomaly-detection-detail-drawer__reason-value">
+                        {selectedLog.reason}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
+
 
               {selectedLog.original_text && (
                 <section className="anomaly-detection-detail-drawer__section">
@@ -685,6 +800,7 @@ const AnomalyDetection = () => {
                   </div>
                 </section>
               )}
+
             </div>
           </aside>
         </div>

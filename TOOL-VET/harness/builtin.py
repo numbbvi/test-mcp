@@ -26,7 +26,7 @@ class HarnessReport:
 
 
 class MCPClient:
-    def __init__(self, process, timeout: float = 30.0):  # 타임아웃을 5초에서 30초로 증가
+    def __init__(self, process, timeout: float = 60.0):  # 타임아웃을 30초에서 60초로 증가
         self.process = process
         self.timeout = timeout
         self._next_id = 1
@@ -69,35 +69,68 @@ class MCPClient:
         # 프로세스가 종료되었는지 확인
         if self.process.poll() is not None:
             exit_code = self.process.poll()
-            raise RuntimeError(f"MCP 서버 프로세스가 종료되었습니다 (종료 코드: {exit_code})")
+            # stderr에서 오류 메시지 읽기 시도
+            stderr_output = ""
+            try:
+                if self.process.stderr:
+                    stderr_output = self.process.stderr.read()
+            except:
+                pass
+            error_msg = f"MCP 서버 프로세스가 종료되었습니다 (종료 코드: {exit_code})"
+            if stderr_output:
+                error_msg += f"\n서버 오류 출력: {stderr_output[:500]}"
+            raise RuntimeError(error_msg)
         
         self._send_json(message)
         
-        # 최대 10번 재시도 (다른 응답이 올 수 있음)
-        max_attempts = 10
-        attempts = 0
-        while attempts < max_attempts:
-            response = self._read_json()
-            if response is None:
-                attempts += 1
-                if attempts >= max_attempts:
-                    raise TimeoutError(f"응답을 받지 못했습니다: {method} (타임아웃: {self.timeout}초)")
-                continue
-            if response.get("id") == request_id:
-                if "error" in response:
-                    error_info = response["error"]
-                    error_code = error_info.get("code", "unknown")
-                    error_message = error_info.get("message", "알 수 없는 오류")
-                    error_data = error_info.get("data", "")
-                    full_error = f"JSON-RPC 오류 (코드: {error_code}): {error_message}"
-                    if error_data:
-                        full_error += f" | 데이터: {error_data}"
-                    raise RuntimeError(full_error)
-                return response.get("result", {})
-            # 다른 요청의 응답이면 계속 대기
-            attempts += 1
+        # initialize의 경우 더 긴 타임아웃 사용
+        original_timeout = self.timeout
+        if method == "initialize":
+            self.timeout = original_timeout * 2  # initialize는 2배 타임아웃
         
-        raise TimeoutError(f"응답을 받지 못했습니다: {method} (최대 재시도 횟수 초과)")
+        try:
+            # 최대 10번 재시도 (다른 응답이 올 수 있음)
+            max_attempts = 10
+            attempts = 0
+            while attempts < max_attempts:
+                response = self._read_json()
+                if response is None:
+                    # 프로세스 상태 재확인
+                    if self.process.poll() is not None:
+                        exit_code = self.process.poll()
+                        stderr_output = ""
+                        try:
+                            if self.process.stderr:
+                                stderr_output = self.process.stderr.read()
+                        except:
+                            pass
+                        error_msg = f"MCP 서버 프로세스가 응답 중 종료되었습니다 (종료 코드: {exit_code})"
+                        if stderr_output:
+                            error_msg += f"\n서버 오류 출력: {stderr_output[:500]}"
+                        raise RuntimeError(error_msg)
+                    
+                    attempts += 1
+                    if attempts >= max_attempts:
+                        raise TimeoutError(f"응답을 받지 못했습니다: {method} (타임아웃: {self.timeout}초, 재시도: {attempts}회)")
+                    continue
+                if response.get("id") == request_id:
+                    if "error" in response:
+                        error_info = response["error"]
+                        error_code = error_info.get("code", "unknown")
+                        error_message = error_info.get("message", "알 수 없는 오류")
+                        error_data = error_info.get("data", "")
+                        full_error = f"JSON-RPC 오류 (코드: {error_code}): {error_message}"
+                        if error_data:
+                            full_error += f" | 데이터: {error_data}"
+                        raise RuntimeError(full_error)
+                    return response.get("result", {})
+                # 다른 요청의 응답이면 계속 대기
+                attempts += 1
+            
+            raise TimeoutError(f"응답을 받지 못했습니다: {method} (최대 재시도 횟수 초과)")
+        finally:
+            # 타임아웃 원래대로 복구
+            self.timeout = original_timeout
 
     def _send_json(self, payload: Dict[str, Any]) -> None:
         data = json.dumps(payload, ensure_ascii=False)

@@ -241,6 +241,18 @@ const ServerRequest = () => {
                   Github Link 또는 File Upload 중 하나는 필수입니다.
                 </small>
               </label>
+              <label className="file-field">
+                <span>File Upload</span>
+                <input 
+                  type="file" 
+                  name="file" 
+                  onChange={onChange}
+                  disabled={submitting}
+                />
+                <small style={{ display: 'block', marginTop: '4px', color: '#666', fontSize: '0.85rem' }}>
+                  Github Link 또는 File Upload 중 하나는 필수입니다.
+                </small>
+              </label>
               <label>
                 <span>Authentication Token (Optional)</span>
                 <input
@@ -253,18 +265,6 @@ const ServerRequest = () => {
                 />
                 <small style={{ color: '#666', fontSize: '0.85em', marginTop: '4px', display: 'block' }}>
                   토큰이 필요한 서버의 경우, tool 스캔을 위해 토큰을 입력해주세요.
-                </small>
-              </label>
-              <label className="file-field">
-                <span>File Upload</span>
-                <input 
-                  type="file" 
-                  name="file" 
-                  onChange={onChange}
-                  disabled={submitting}
-                />
-                <small style={{ display: 'block', marginTop: '4px', color: '#666', fontSize: '0.85rem' }}>
-                  Github Link 또는 File Upload 중 하나는 필수입니다.
                 </small>
               </label>
               <div className="request-actions">

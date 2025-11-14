@@ -1319,7 +1319,7 @@
 }
 
 .table-wrapper {
-  margin: 0 32px 32px 32px;
+  margin: 0 0px 32px 0px;
   overflow-x: auto;
   background: #f5f5f5;
   border-radius: 8px;

@@ -273,6 +273,29 @@ class _NpmRuntimeDetector(_RuntimeDetector):
         if "build" in scripts:
             install_steps.append(["npm", "run", "build"])
 
+        # monorepo 감지 및 특정 서버 디렉토리 찾기
+        workspaces = data.get("workspaces", [])
+        if workspaces or data.get("name", "").startswith("@modelcontextprotocol/servers"):
+            # monorepo인 경우 특정 서버 디렉토리 찾기
+            server_dir = self._find_server_directory(repo_root)
+            if server_dir and server_dir != repo_root:
+                # 특정 서버 디렉토리에서 실행
+                server_package_json = server_dir / "package.json"
+                if server_package_json.exists():
+                    server_data = json.loads(server_package_json.read_text(encoding="utf-8"))
+                    server_command, transport_type, http_port = self._guess_server_command(server_dir, server_data)
+                    return RuntimePlan(
+                        name="npm",
+                        install_steps=install_steps,
+                        server_command=server_command,
+                        env={},
+                        notes=f"npm monorepo 프로젝트 자동 실행 (서버: {server_dir.name})",
+                        transport_type=transport_type,
+                        http_port=http_port,
+                        http_url=f"http://127.0.0.1:{http_port}" if transport_type == "http" and http_port else None,
+                        work_dir=server_dir,
+                    )
+
         server_command, transport_type, http_port = self._guess_server_command(repo_root, data)
 
         http_url = None
@@ -366,6 +389,49 @@ class _NpmRuntimeDetector(_RuntimeDetector):
             return (["npx", "--yes", package_name, "--transport", "stdio"], "stdio", None)
 
         raise RuntimeError("npm 프로젝트에서 실행할 커맨드를 찾지 못했습니다.")
+
+    def _find_server_directory(self, repo_root: Path) -> Optional[Path]:
+        """monorepo에서 특정 서버 디렉토리를 찾습니다."""
+        # src 디렉토리 내의 서버 디렉토리 찾기
+        src_dir = repo_root / "src"
+        if src_dir.is_dir():
+            # 일반적인 서버 디렉토리 이름 패턴
+            server_patterns = ["notion", "slack", "filesystem", "memory", "sequential-thinking", "everything"]
+            for pattern in server_patterns:
+                server_dir = src_dir / pattern
+                if server_dir.is_dir() and (server_dir / "package.json").exists():
+                    return server_dir
+            
+            # src 디렉토리 내의 모든 디렉토리 확인
+            try:
+                for item in src_dir.iterdir():
+                    if item.is_dir() and (item / "package.json").exists():
+                        # package.json에 bin이나 main이 있는지 확인
+                        try:
+                            server_data = json.loads((item / "package.json").read_text(encoding="utf-8"))
+                            if server_data.get("bin") or server_data.get("main"):
+                                return item
+                        except:
+                            pass
+            except PermissionError:
+                pass
+        
+        # packages 디렉토리 확인 (일부 monorepo 구조)
+        packages_dir = repo_root / "packages"
+        if packages_dir.is_dir():
+            try:
+                for item in packages_dir.iterdir():
+                    if item.is_dir() and (item / "package.json").exists():
+                        try:
+                            server_data = json.loads((item / "package.json").read_text(encoding="utf-8"))
+                            if server_data.get("bin") or server_data.get("main"):
+                                return item
+                        except:
+                            pass
+            except PermissionError:
+                pass
+        
+        return None
 
 
 def _select_preferred(paths: Iterable[Path], keywords: Iterable[str]) -> Optional[Path]:

@@ -582,19 +582,24 @@
   text-transform: uppercase;
 }
 
+.severity-critical {
+  background: #d32f2f;
+  color: #fff;
+}
+
 .severity-high {
-  background: #ffebee;
-  color: #c62828;
+  background: #f57c00;
+  color: #fff;
 }
 
 .severity-medium {
-  background: #fff3e0;
-  color: #e65100;
+  background: #fbc02d;
+  color: #fff;
 }
 
 .severity-low {
-  background: #e8f5e9;
-  color: #2e7d32;
+  background: #388e3c;
+  color: #fff;
 }
 
 /* 트래픽 그래프 */

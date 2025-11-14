@@ -1466,6 +1466,7 @@ const RequestBoard = () => {
                   })() && (
                     <div>
                       {/* 취약점 정보 표시 - riskAnalysisResult가 없어도 기본값(0) 표시 */}
+                      <h3>결과</h3>
                       <div style={{
                             display: 'grid',
                             gridTemplateColumns: 'repeat(3, 1fr)',
