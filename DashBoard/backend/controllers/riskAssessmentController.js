@@ -84,16 +84,20 @@ const riskAssessmentController = {
         }
       }
       
-      // MCP 서버 이름 결정: 명시적으로 제공되거나 GitHub URL에서 추출
-      let serverName = mcp_server_name;
-      if (!serverName && github_url) {
+      // MCP 서버 이름 결정: GitHub URL에서 추출 (우선순위 1), 없으면 파일 경로에서 추출
+      let serverName = null;
+      
+      // GitHub URL이 있으면 무조건 GitHub URL에서 리포지토리 이름 추출
+      if (github_url) {
         // GitHub URL에서 repo 이름 추출: https://github.com/user/repo -> repo
         const match = github_url.match(/github\.com\/[^\/]+\/([^\/]+)/);
         if (match && match[1]) {
           serverName = match[1].replace(/\.git$/, ''); // .git 제거
+          console.log(`[SCAN] GitHub URL에서 서버 이름 추출: ${serverName}`);
         }
       }
-      // 파일 경로만 있는 경우 파일명에서 추출
+      
+      // GitHub URL이 없거나 추출 실패한 경우 파일 경로에서 추출
       if (!serverName && repository_path) {
         const fileName = path.basename(repository_path);
         // 타임스탬프_파일명 형식에서 파일명 추출
@@ -103,10 +107,13 @@ const riskAssessmentController = {
         } else {
           serverName = fileName.replace(/\.[^.]*$/, ''); // 확장자 제거
         }
+        console.log(`[SCAN] 파일 경로에서 서버 이름 추출: ${serverName}`);
       }
+      
       // 기본값: 'finding'
       if (!serverName || serverName.trim() === '') {
         serverName = 'finding';
+        console.log(`[SCAN] 서버 이름을 찾을 수 없어 기본값 사용: ${serverName}`);
       }
 
       // serverName이 숫자만 있는 경우 방지 (안전한 이름으로 변환)
@@ -115,12 +122,16 @@ const riskAssessmentController = {
       }
 
       // serverName을 안전한 파일명으로 변환 (공백, 특수문자 제거)
-      // 공백을 언더스코어로 변환하고, 특수문자는 제거
+      // Python의 save_mcp_scan_result와 동일한 로직 사용
+      // Python: "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in server_name)
       const safeServerName = serverName
-        .replace(/\s+/g, '_')  // 공백을 언더스코어로 변환
-        .replace(/[^a-zA-Z0-9_-]/g, '_')  // 알파벳, 숫자, 언더스코어, 하이픈만 허용
-        .replace(/_{2,}/g, '_')  // 연속된 언더스코어를 하나로
-        .replace(/^_+|_+$/g, '');  // 앞뒤 언더스코어 제거
+        .split('')
+        .map(c => (c.match(/[a-zA-Z0-9_-]/) ? c : '_'))
+        .join('')
+        .replace(/_{2,}/g, '_')
+        .replace(/^_+|_+$/g, '');
+      
+      console.log(`[SCAN] 서버 이름 변환: "${serverName}" -> "${safeServerName}"`);
 
       // scanPath가 null인 경우 에러 반환
       if (!scanPath) {
@@ -185,8 +196,10 @@ const riskAssessmentController = {
 
       // 도커 컨테이너에서 스캔 실행 (안전한 서버 이름으로 출력 파일 지정)
       // execFile을 사용하여 쉘 없이 직접 실행
+      // 작업 디렉토리를 /app으로 명시하여 output 디렉토리가 /app/output에 생성되도록 함
       const dockerArgs = [
         'exec',
+        '-w', '/app',  // 작업 디렉토리를 /app으로 설정
         CONTAINER_NAME,
         'python',
         '-m',
@@ -197,9 +210,11 @@ const riskAssessmentController = {
         safeServerName
       ];
       
-      console.log(`스캔 시작: ${scanPath} (서버 이름: ${serverName})`);
-      console.log(`실행 명령: docker ${dockerArgs.join(' ')}`);
-      console.log(`현재 작업 디렉토리: ${SCANNER_PATH}`);
+      console.log(`[SCAN] 스캔 시작: ${scanPath}`);
+      console.log(`[SCAN] 서버 이름: ${serverName} (GitHub URL에서 추출)`);
+      console.log(`[SCAN] 안전한 파일명: ${safeServerName}`);
+      console.log(`[SCAN] 실행 명령: docker ${dockerArgs.join(' ')}`);
+      console.log(`[SCAN] 현재 작업 디렉토리: ${SCANNER_PATH}`);
       
       // 스캔 ID 미리 생성 (Bomtori와 code scanner가 동일한 scan_id 사용)
       const scanId = uuidv4();
@@ -285,8 +300,10 @@ const riskAssessmentController = {
           await fs.mkdir(BOMTORI_OUTPUT_DIR, { recursive: true });
           
           // docker exec로 실행 (bomtool-scanner와 동일한 방식)
+          // 작업 디렉토리를 /app으로 명시하여 main.py가 올바른 경로에서 실행되도록 함
           const bomtoriArgs = [
             'exec',
+            '-w', '/app',  // 작업 디렉토리를 /app으로 설정
             BOMTORI_CONTAINER_NAME,
             'python',
             'main.py',
@@ -715,7 +732,31 @@ const riskAssessmentController = {
       }
       
       // Code Scanner도 Promise로 감싸서 동시 실행
-      const scannerPromise = new Promise((resolve, reject) => {
+      const scannerPromise = new Promise(async (resolve, reject) => {
+        // 컨테이너 내부 output 디렉토리 확인 및 생성
+        try {
+          const checkOutputDir = spawn('docker', ['exec', CONTAINER_NAME, 'test', '-d', '/app/output'], {
+            cwd: SCANNER_PATH
+          });
+          await new Promise((resolveCheck) => {
+            checkOutputDir.on('close', (code) => {
+              if (code !== 0) {
+                // output 디렉토리가 없으면 생성
+                const mkdirOutput = spawn('docker', ['exec', CONTAINER_NAME, 'mkdir', '-p', '/app/output'], {
+                  cwd: SCANNER_PATH
+                });
+                mkdirOutput.on('close', () => resolveCheck());
+                mkdirOutput.on('error', () => resolveCheck());
+              } else {
+                resolveCheck();
+              }
+            });
+            checkOutputDir.on('error', () => resolveCheck());
+          });
+        } catch (dirError) {
+          console.error('[Scanner] output 디렉토리 확인/생성 실패:', dirError);
+        }
+        
         const scanProcess = spawn('docker', dockerArgs, {
           cwd: SCANNER_PATH
         });
@@ -795,22 +836,96 @@ const riskAssessmentController = {
           }
 
           try {
-            // 결과 파일 읽기 (안전한 서버 이름으로 저장된 파일)
-            const resultFile = path.join(OUTPUT_DIR, `${safeServerName}.json`);
+            // 결과 파일 읽기 (GitHub URL에서 추출한 리포지토리 이름 사용)
+            // Python의 save_mcp_scan_result와 동일한 파일명 생성 로직 사용
+            // Python: "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in server_name)
             
-            // 파일 존재 확인 (최대 5초 대기)
+            // GitHub URL에서 리포지토리 이름 추출 (스캔 실행 시와 동일한 로직)
+            let fileServerName = serverName; // 이미 GitHub URL에서 추출한 값
+            if (github_url) {
+              const match = github_url.match(/github\.com\/[^\/]+\/([^\/]+)/);
+              if (match && match[1]) {
+                fileServerName = match[1].replace(/\.git$/, '');
+                console.log(`[Scanner] GitHub URL에서 파일명용 서버 이름 추출: ${fileServerName}`);
+              }
+            }
+            
+            // Python과 동일한 파일명 생성 로직
+            const pythonSafeName = fileServerName
+              .split('')
+              .map(c => (c.match(/[a-zA-Z0-9_-]/) ? c : '_'))
+              .join('')
+              .replace(/_{2,}/g, '_')
+              .replace(/^_+|_+$/g, '');
+            
+            console.log(`[Scanner] 파일 찾기 - serverName: ${serverName}, fileServerName: ${fileServerName}, pythonSafeName: ${pythonSafeName}`);
+            const resultFile = path.join(OUTPUT_DIR, `${pythonSafeName}.json`);
+            console.log(`[Scanner] 찾는 파일 경로: ${resultFile}`);
+            
+            // 파일 존재 확인 (최대 30초 대기, 1초마다 체크)
             let fileExists = false;
-            for (let i = 0; i < 10; i++) {
+            let actualResultFile = resultFile;
+            
+            for (let i = 0; i < 30; i++) {
               try {
                 await fs.access(resultFile);
                 fileExists = true;
+                actualResultFile = resultFile;
                 break;
               } catch (e) {
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // 파일이 없으면 디렉토리에서 유사한 파일 찾기
+                try {
+                  const allFiles = await fs.readdir(OUTPUT_DIR);
+                  
+                  // 파일명 매칭: pythonSafeName의 기본 이름 부분 추출 (숫자 제거)
+                  const baseName = pythonSafeName.replace(/\d+$/, '').replace(/_+$/, '');
+                  console.log(`[Scanner] 기본 이름으로 검색: ${baseName}`);
+                  
+                  const matchingFiles = allFiles.filter(f => {
+                    if (!f.endsWith('.json')) return false;
+                    const fileNameWithoutExt = f.replace(/\.json$/, '');
+                    // 정확한 매칭 또는 기본 이름으로 시작하는 파일
+                    return fileNameWithoutExt === pythonSafeName ||
+                           fileNameWithoutExt === safeServerName ||
+                           fileNameWithoutExt.includes(pythonSafeName) ||
+                           fileNameWithoutExt.includes(safeServerName) ||
+                           fileNameWithoutExt.startsWith(baseName) ||
+                           baseName && fileNameWithoutExt.startsWith(baseName);
+                  });
+                  
+                  console.log(`[Scanner] 매칭된 파일들: ${matchingFiles.join(', ')}`);
+                  
+                  if (matchingFiles.length > 0) {
+                    // 가장 최근에 수정된 파일 선택
+                    const fileStats = await Promise.all(
+                      matchingFiles.map(f => fs.stat(path.join(OUTPUT_DIR, f)).then(stats => ({ file: f, stats })))
+                    );
+                    const latestFile = fileStats.sort((a, b) => b.stats.mtime - a.stats.mtime)[0];
+                    actualResultFile = path.join(OUTPUT_DIR, latestFile.file);
+                    fileExists = true;
+                    console.log(`[Scanner] 유사한 파일 발견 및 사용: ${latestFile.file}`);
+                    break;
+                  }
+                } catch (dirError) {
+                  // 디렉토리 읽기 실패는 무시
+                  console.error(`[Scanner] 디렉토리 읽기 오류: ${dirError.message}`);
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 1000));
               }
             }
 
             if (!fileExists) {
+              // 마지막으로 디렉토리의 모든 JSON 파일 확인
+              try {
+                const allFiles = await fs.readdir(OUTPUT_DIR);
+                const jsonFiles = allFiles.filter(f => f.endsWith('.json'));
+                console.log(`[Scanner] OUTPUT_DIR의 모든 JSON 파일:`, jsonFiles);
+                console.log(`[Scanner] 찾는 파일명: ${pythonSafeName}.json 또는 ${safeServerName}.json`);
+              } catch (dirError) {
+                console.error('[Scanner] OUTPUT_DIR 읽기 실패:', dirError);
+              }
+              
               const currentProgress = scanProgress.get(scanId);
               if (currentProgress) {
                 currentProgress.scannerError = `스캔 결과 파일을 찾을 수 없습니다: ${resultFile}`;
@@ -825,13 +940,18 @@ const riskAssessmentController = {
               return reject(new Error(`스캔 결과 파일을 찾을 수 없습니다: ${resultFile}`));
             }
 
-            const resultData = await fs.readFile(resultFile, 'utf-8');
+            const resultData = await fs.readFile(actualResultFile, 'utf-8');
+            console.log(`[Scanner] 결과 파일 읽기 성공: ${actualResultFile}`);
             const scanResult = JSON.parse(resultData);
 
             // 결과 형식: { scan_info: {...}, findings: [...], summary: {...} }
             const findings = scanResult.findings || (Array.isArray(scanResult) ? scanResult : []);
 
             // scanId는 이미 생성되어 있음 (Bomtori와 동일한 ID 사용)
+            
+            // 실제 생성된 파일명 추출 (DB에 저장하기 위해)
+            const actualFileName = path.basename(actualResultFile);
+            console.log(`[Scanner] 실제 생성된 파일명: ${actualFileName}`);
 
             // 기존 코드 취약점 데이터 삭제 (같은 scan_path의 이전 스캔 결과)
             try {
@@ -842,13 +962,13 @@ const riskAssessmentController = {
               console.error('기존 코드 취약점 데이터 삭제 오류:', deleteError);
             }
 
-            // 데이터베이스에 저장
+            // 데이터베이스에 저장 (실제 파일명도 함께 저장)
             const insertStmt = db.prepare(`
               INSERT INTO code_vulnerabilities (
                 scan_id, scan_path, scan_timestamp, rule_id, vulnerability, severity,
                 language, file, line, column, message, description, cwe,
-                code_snippet, pattern_type, pattern, confidence, raw_finding
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                code_snippet, pattern_type, pattern, confidence, raw_finding, result_filename
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
 
             for (const finding of findings) {
@@ -871,7 +991,8 @@ const riskAssessmentController = {
                   finding.pattern_type || null,
                   finding.pattern || null,
                   finding.confidence || null,
-                  JSON.stringify(finding)
+                  JSON.stringify(finding),
+                  actualFileName  // 실제 생성된 파일명 저장
                 );
               } catch (insertError) {
                 console.error('취약점 저장 오류:', insertError);
@@ -2120,45 +2241,114 @@ const riskAssessmentController = {
 
   // OSS 취약점 조회 (데이터베이스에서 조회)
   getOssVulnerabilities: async (req, res) => {
+    console.log(`[OSS] ========== getOssVulnerabilities 함수 호출됨 ==========`);
+    console.log(`[OSS] req.query:`, req.query);
+    console.log(`[OSS] req.method:`, req.method);
+    console.log(`[OSS] req.url:`, req.url);
+    
     try {
-      const { scan_id, scan_path } = req.query;
+      const { scan_id, scan_path, mcp_server_name } = req.query;
+      
+      console.log(`[OSS] getOssVulnerabilities 호출: scan_id=${scan_id}, scan_path=${scan_path}, mcp_server_name=${mcp_server_name}`);
+      
+      // scan_id나 scan_path가 없으면 에러 반환 (모든 데이터 반환 방지)
+      if (!scan_id && !scan_path) {
+        return res.status(400).json({
+          success: false,
+          message: 'scan_id 또는 scan_path가 필요합니다.'
+        });
+      }
       
       let vulnerabilities = [];
       
       if (scan_id) {
         // scan_id로 조회
-        vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_id);
+        if (mcp_server_name) {
+          // mcp_server_name이 있으면 scan_path로 필터링 (scan_path에 서버 이름이 포함되어야 함)
+          // 먼저 scan_id로 scan_path를 찾고, 그 scan_path가 서버 이름과 일치하는지 확인
+          const scanPathCheck = db.prepare('SELECT DISTINCT scan_path FROM oss_vulnerabilities WHERE scan_id = ? LIMIT 1').get(scan_id);
+          if (scanPathCheck && scanPathCheck.scan_path) {
+            // scan_path에서 서버 이름 추출 (GitHub URL의 마지막 부분)
+            const pathParts = scanPathCheck.scan_path.split('/');
+            const repoName = pathParts[pathParts.length - 1].replace('.git', '').replace(/[^a-zA-Z0-9_-]/g, '_');
+            if (repoName.toLowerCase() === mcp_server_name.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_')) {
+              vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_id);
+            } else {
+              vulnerabilities = [];
+            }
+          } else {
+            vulnerabilities = [];
+          }
+        } else {
+          vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_id);
+        }
+        console.log(`[OSS] scan_id로 조회: ${vulnerabilities.length}개 발견`);
       } else if (scan_path) {
         // scan_path로 최신 스캔 결과 조회
-        const latestScan = db.prepare('SELECT DISTINCT scan_id FROM oss_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC LIMIT 1').get(scan_path);
-        if (latestScan && latestScan.scan_id) {
-          vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(latestScan.scan_id);
+        let query = 'SELECT DISTINCT scan_id FROM oss_vulnerabilities WHERE scan_path = ?';
+        const params = [scan_path];
+        
+        // mcp_server_name이 있으면 추가 필터링 (scan_path에서 서버 이름 확인)
+        if (mcp_server_name) {
+          // scan_path의 마지막 부분이 서버 이름과 일치하는지 확인
+          const pathParts = scan_path.split('/');
+          const repoName = pathParts[pathParts.length - 1].replace('.git', '').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const serverNameNormalized = mcp_server_name.replace(/[^a-zA-Z0-9_-]/g, '_');
+          if (repoName.toLowerCase() !== serverNameNormalized.toLowerCase()) {
+            // 서버 이름이 일치하지 않으면 빈 결과 반환
+            vulnerabilities = [];
+            console.log(`[OSS] 서버 이름 불일치: repoName=${repoName}, mcp_server_name=${serverNameNormalized}`);
+          } else {
+            const latestScan = db.prepare(query).get(...params);
+            if (latestScan && latestScan.scan_id) {
+              vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(latestScan.scan_id);
+              console.log(`[OSS] scan_path로 최신 scan_id 조회 (서버 필터링): ${vulnerabilities.length}개 발견`);
+            } else {
+              vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_path);
+              console.log(`[OSS] scan_path로 직접 조회 (서버 필터링): ${vulnerabilities.length}개 발견`);
+            }
+          }
         } else {
-          // scan_path로 직접 조회 시도 (scan_id가 없는 경우)
-          vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_path);
+          const latestScan = db.prepare(query).get(...params);
+          if (latestScan && latestScan.scan_id) {
+            vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(latestScan.scan_id);
+            console.log(`[OSS] scan_path로 최신 scan_id 조회: ${vulnerabilities.length}개 발견`);
+          } else {
+            // scan_path로 직접 조회 시도 (scan_id가 없는 경우)
+            vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_path);
+            console.log(`[OSS] scan_path로 직접 조회: ${vulnerabilities.length}개 발견`);
+          }
         }
         
-        // 데이터베이스에 데이터가 없고 scan_path가 GitHub URL인 경우, dashboard.json 파일에서 직접 로드 시도
-        if (vulnerabilities.length === 0 && scan_path && isValidGithubUrl(scan_path)) {
+        // 데이터베이스에 데이터가 없으면 dashboard.json 파일에서 직접 로드 시도
+        if (vulnerabilities.length === 0 && scan_path) {
           try {
-            // repo_name 추출 (GitHub URL에서)
-            // 예: https://github.com/github/github-mcp-server -> github-mcp-server
-            // 예: https://github.com/github/github-mcp-server.git -> github-mcp-server
-            let repoName = scan_path.split('/').pop().replace('.git', '');
-            // GitHub URL 형식: https://github.com/owner/repo
-            const urlParts = scan_path.split('/');
-            if (urlParts.length >= 2 && urlParts[urlParts.length - 2] && urlParts[urlParts.length - 1]) {
-              // owner/repo 형식으로 추출
-              repoName = `${urlParts[urlParts.length - 2]}-${urlParts[urlParts.length - 1]}`.replace('.git', '');
+            let repoName;
+            
+            // GitHub URL인 경우
+            if (isValidGithubUrl(scan_path)) {
+              // repo_name 추출 (GitHub URL에서)
+              // 예: https://github.com/github/github-mcp-server -> github-mcp-server
+              // 예: https://github.com/github/github-mcp-server.git -> github-mcp-server
+              let tempRepoName = scan_path.split('/').pop().replace('.git', '');
+              // GitHub URL 형식: https://github.com/owner/repo
+              const urlParts = scan_path.split('/');
+              if (urlParts.length >= 2 && urlParts[urlParts.length - 2] && urlParts[urlParts.length - 1]) {
+                // owner/repo 형식으로 추출
+                tempRepoName = `${urlParts[urlParts.length - 2]}-${urlParts[urlParts.length - 1]}`.replace('.git', '');
+              }
+              repoName = tempRepoName.replace(/[^a-zA-Z0-9_-]/g, '_');
+            } else {
+              // GitHub URL이 아닌 경우 (예: notion-mcp-server), scan_path 자체를 repoName으로 사용
+              repoName = scan_path.replace(/[^a-zA-Z0-9_-]/g, '_');
             }
-            repoName = repoName.replace(/[^a-zA-Z0-9_-]/g, '_');
             
             const dashboardFile = path.join(BOMTORI_OUTPUT_DIR, `${repoName}-dashboard.json`);
             
-            console.log(`데이터베이스에 OSS 취약점이 없어 dashboard.json 파일에서 로드 시도`);
-            console.log(`scan_path: ${scan_path}`);
-            console.log(`추출된 repoName: ${repoName}`);
-            console.log(`예상 파일 경로: ${dashboardFile}`);
+            console.log(`[OSS] 데이터베이스에 OSS 취약점이 없어 dashboard.json 파일에서 로드 시도`);
+            console.log(`[OSS] scan_path: ${scan_path}`);
+            console.log(`[OSS] 추출된 repoName: ${repoName}`);
+            console.log(`[OSS] 예상 파일 경로: ${dashboardFile}`);
             
             // 파일 존재 확인
             try {
@@ -2261,35 +2451,43 @@ const riskAssessmentController = {
                   }
                 }
                 
-                console.log(`OSS 취약점 저장 완료: 성공 ${successCount}개, 실패 ${errorCount}개 (총 ${dashboardVulnerabilities.length}개)`);
+                console.log(`[OSS] OSS 취약점 저장 완료: 성공 ${successCount}개, 실패 ${errorCount}개 (총 ${dashboardVulnerabilities.length}개)`);
                 
                 // 저장한 데이터 다시 조회
                 vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_path);
-                console.log(`데이터베이스에서 조회된 취약점 개수: ${vulnerabilities.length}`);
+                console.log(`[OSS] 데이터베이스에서 조회된 취약점 개수: ${vulnerabilities.length}`);
               } else {
                 console.log(`dashboard.json에 취약점이 없습니다 (vulnerabilities 배열이 비어있음)`);
               }
             } catch (fileError) {
-              console.log(`dashboard.json 파일을 찾을 수 없거나 읽을 수 없습니다: ${dashboardFile}`);
-              console.log(`파일 에러:`, fileError.message);
+              console.log(`[OSS] dashboard.json 파일을 찾을 수 없거나 읽을 수 없습니다: ${dashboardFile}`);
+              console.log(`[OSS] 파일 에러:`, fileError.message);
               
               // 파일을 찾지 못한 경우, output 디렉토리의 모든 dashboard.json 파일 확인
               try {
                 const allFiles = await fs.readdir(BOMTORI_OUTPUT_DIR);
                 const dashboardFiles = allFiles.filter(f => f.includes('dashboard.json'));
-                console.log(`발견된 dashboard.json 파일들:`, dashboardFiles);
+                console.log(`[OSS] 발견된 dashboard.json 파일들:`, dashboardFiles);
                 
-                // 파일명에 repoName이 포함된 파일 찾기
+                // 파일명에 repoName이 포함된 파일 찾기 (더 정확한 매칭)
                 const matchingFiles = dashboardFiles.filter(f => {
                   const fileLower = f.toLowerCase();
                   const repoNameLower = repoName.toLowerCase();
-                  return fileLower.includes(repoNameLower) || repoNameLower.includes(fileLower.replace('-dashboard.json', ''));
+                  const fileBaseName = f.replace('-dashboard.json', '').toLowerCase();
+                  
+                  // 정확한 매칭 또는 부분 매칭
+                  return fileBaseName === repoNameLower || 
+                         fileBaseName.includes(repoNameLower) || 
+                         repoNameLower.includes(fileBaseName) ||
+                         fileLower.includes(repoNameLower) || 
+                         repoNameLower.includes(fileLower.replace('-dashboard.json', ''));
                 });
                 
                 if (matchingFiles.length > 0) {
-                  console.log(`매칭되는 파일 발견: ${matchingFiles.join(', ')}`);
+                  console.log(`[OSS] 매칭되는 파일 발견: ${matchingFiles.join(', ')}`);
                   // 가장 최근 파일 사용 시도
                   const latestFile = path.join(BOMTORI_OUTPUT_DIR, matchingFiles[0]);
+                  console.log(`[OSS] 사용할 파일: ${latestFile}`);
                   try {
                     const dashboardData = JSON.parse(await fs.readFile(latestFile, 'utf-8'));
                     const dashboardVulnerabilities = dashboardData.vulnerabilities || [];
@@ -2395,9 +2593,6 @@ const riskAssessmentController = {
             console.error('dashboard.json 파일에서 OSS 취약점 로드 오류:', loadError);
           }
         }
-      } else {
-        // 모든 취약점 조회
-        vulnerabilities = db.prepare('SELECT * FROM oss_vulnerabilities ORDER BY scan_timestamp DESC, id DESC').all();
       }
       
       // raw_data JSON 파싱
@@ -2444,14 +2639,50 @@ const riskAssessmentController = {
       });
       
       // packages 배열도 함께 반환 (license 정보 포함)
-      // scan_id로 조회한 경우에도 scan_path를 가져와서 packages를 로드해야 함
+      // 무조건 dashboard.json 파일에서 packages를 로드
       let packages = [];
       let actualScanPath = scan_path;
+      
+      // 강제로 stdout에 출력 (버퍼링 방지)
+      process.stdout.write(`[OSS] ========== packages 로드 시작 ==========\n`);
+      process.stdout.write(`[OSS] scan_path=${scan_path}, scan_id=${scan_id}, vulnerabilities.length=${vulnerabilities.length}\n`);
+      console.log(`[OSS] ========== packages 로드 시작 ==========`);
+      console.log(`[OSS] scan_path=${scan_path}, scan_id=${scan_id}, vulnerabilities.length=${vulnerabilities.length}`);
+      
+      // scan_path나 scan_id가 없으면, 모든 dashboard.json 파일을 확인하여 packages가 있는 파일 찾기
+      if (!actualScanPath && !scan_id) {
+        console.log(`[OSS] scan_path와 scan_id가 모두 없음 - 모든 dashboard.json 파일 확인`);
+        try {
+          const allFiles = await fs.readdir(BOMTORI_OUTPUT_DIR);
+          const dashboardFiles = allFiles.filter(f => f.includes('dashboard.json'));
+          console.log(`[OSS] 발견된 dashboard.json 파일들:`, dashboardFiles);
+          
+          // 모든 dashboard.json 파일을 순회하여 packages가 있는 파일 찾기
+          for (const dashboardFile of dashboardFiles) {
+            const filePath = path.join(BOMTORI_OUTPUT_DIR, dashboardFile);
+            try {
+              const dashboardData = JSON.parse(await fs.readFile(filePath, 'utf-8'));
+              const filePackages = dashboardData.packages || [];
+              console.log(`[OSS] ${dashboardFile}에서 packages: ${filePackages.length}개`);
+              if (filePackages.length > 0) {
+                packages = filePackages;
+                console.log(`[OSS] ✅✅✅ ${dashboardFile}에서 ${packages.length}개 패키지 로드 완료 ✅✅✅`);
+                console.log(`[OSS] packages 샘플 (처음 3개):`, packages.slice(0, 3).map(p => ({ name: p.name, dependency_type: p.dependency_type })));
+                break;
+              }
+            } catch (readError) {
+              console.error(`[OSS] ${dashboardFile} 읽기 실패:`, readError.message);
+            }
+          }
+        } catch (dirError) {
+          console.error('[OSS] 디렉토리 읽기 실패:', dirError.message);
+        }
+      }
       
       // scan_id로 조회한 경우 scan_path를 가져오기 (모든 경로에서 동일하게 처리)
       if (!actualScanPath && vulnerabilities.length > 0) {
         actualScanPath = vulnerabilities[0].scan_path;
-        console.log(`scan_id로 조회: scan_path 추출됨 - ${actualScanPath}`);
+        console.log(`[OSS] scan_id로 조회: scan_path 추출됨 - ${actualScanPath}`);
       }
       
       // scan_path가 여전히 없으면 scan_id로 조회한 경우에도 scan_path를 다시 시도
@@ -2459,64 +2690,330 @@ const riskAssessmentController = {
         const scanPathFromDb = db.prepare('SELECT DISTINCT scan_path FROM oss_vulnerabilities WHERE scan_id = ? LIMIT 1').get(scan_id);
         if (scanPathFromDb && scanPathFromDb.scan_path) {
           actualScanPath = scanPathFromDb.scan_path;
-          console.log(`scan_id로 scan_path 재조회: ${actualScanPath}`);
+          console.log(`[OSS] scan_id로 scan_path 재조회: ${actualScanPath}`);
         }
       }
       
-      if (actualScanPath && isValidGithubUrl(actualScanPath)) {
+      console.log(`[OSS] 최종 actualScanPath: ${actualScanPath}`);
+      
+      // actualScanPath가 있으면 해당 파일을 먼저 시도
+      if (actualScanPath) {
         try {
-          // repo_name 추출 (실제 파일명은 repo-dashboard.json 형식)
-          // GitHub URL 형식: https://github.com/owner/repo
-          let repoName = actualScanPath.split('/').pop().replace('.git', '');
-          // owner-repo 형식이 아니라 repo만 사용
-          repoName = repoName.replace(/[^a-zA-Z0-9_-]/g, '_');
+          let repoName;
+          
+          // GitHub URL인 경우
+          if (isValidGithubUrl(actualScanPath)) {
+            // repo_name 추출 (실제 파일명은 repo-dashboard.json 형식)
+            // GitHub URL 형식: https://github.com/owner/repo
+            const urlParts = actualScanPath.split('/');
+            if (urlParts.length >= 2) {
+              // owner/repo 형식에서 repo만 추출
+              let tempRepoName = urlParts[urlParts.length - 1].replace('.git', '');
+              repoName = tempRepoName.replace(/[^a-zA-Z0-9_-]/g, '_');
+            } else {
+              let tempRepoName = actualScanPath.split('/').pop().replace('.git', '');
+              repoName = tempRepoName.replace(/[^a-zA-Z0-9_-]/g, '_');
+            }
+          } else {
+            // GitHub URL이 아닌 경우 (예: notion-mcp-server), scan_path 자체를 repoName으로 사용
+            repoName = actualScanPath.replace(/[^a-zA-Z0-9_-]/g, '_');
+          }
           
           const dashboardFile = path.join(BOMTORI_OUTPUT_DIR, `${repoName}-dashboard.json`);
+          
+          console.log(`[OSS] dashboard.json 파일 로드 시도: ${dashboardFile}`);
+          console.log(`[OSS] repoName: ${repoName}, actualScanPath: ${actualScanPath}`);
           
           try {
             await fs.access(dashboardFile);
             const dashboardData = JSON.parse(await fs.readFile(dashboardFile, 'utf-8'));
             packages = dashboardData.packages || [];
-            console.log(`packages 배열 로드 완료: ${packages.length}개 패키지 (scan_path: ${actualScanPath}, repoName: ${repoName})`);
+            console.log(`[OSS] ✅ packages 배열 로드 완료: ${packages.length}개 패키지`);
+            console.log(`[OSS] dashboard.json 파일 경로: ${dashboardFile}`);
+            if (packages.length > 0) {
+              console.log(`[OSS] packages 배열 샘플 (처음 3개):`, packages.slice(0, 3).map(p => ({ name: p.name, dependency_type: p.dependency_type })));
+            }
           } catch (fileError) {
-            console.log(`dashboard.json 파일을 찾을 수 없거나 읽을 수 없습니다: ${dashboardFile}`, fileError.message);
+            console.log(`[OSS] ❌ dashboard.json 파일을 찾을 수 없습니다: ${dashboardFile}`);
+            console.log(`[OSS] 파일 에러:`, fileError.message);
             
             // 파일을 찾지 못한 경우, output 디렉토리의 모든 dashboard.json 파일 확인
             try {
               const allFiles = await fs.readdir(BOMTORI_OUTPUT_DIR);
+              console.log(`[OSS] BOMTORI_OUTPUT_DIR: ${BOMTORI_OUTPUT_DIR}`);
+              console.log(`[OSS] BOMTORI_OUTPUT_DIR의 모든 파일:`, allFiles);
               const dashboardFiles = allFiles.filter(f => f.includes('dashboard.json'));
+              console.log(`[OSS] 발견된 dashboard.json 파일들:`, dashboardFiles);
               
-              // 파일명에 repoName이 포함된 파일 찾기
+              // 파일명에 repoName이 포함된 파일 찾기 (더 정확한 매칭)
               const matchingFiles = dashboardFiles.filter(f => {
                 const fileLower = f.toLowerCase();
                 const repoNameLower = repoName.toLowerCase();
-                return fileLower.includes(repoNameLower) || repoNameLower.includes(fileLower.replace('-dashboard.json', ''));
+                const fileBaseName = f.replace('-dashboard.json', '').toLowerCase();
+                
+                // 정확한 매칭 또는 부분 매칭
+                return fileBaseName === repoNameLower || 
+                       fileBaseName.includes(repoNameLower) || 
+                       repoNameLower.includes(fileBaseName) ||
+                       fileLower.includes(repoNameLower) || 
+                       repoNameLower.includes(fileLower.replace('-dashboard.json', ''));
               });
               
+              console.log(`[OSS] 매칭되는 파일들:`, matchingFiles);
+              
               if (matchingFiles.length > 0) {
-                // 가장 최근 파일 사용
-                const latestFile = path.join(BOMTORI_OUTPUT_DIR, matchingFiles[0]);
-                try {
-                  const dashboardData = JSON.parse(await fs.readFile(latestFile, 'utf-8'));
-                  packages = dashboardData.packages || [];
-                  console.log(`대체 파일에서 packages 배열 로드 완료: ${packages.length}개 패키지 (파일: ${matchingFiles[0]})`);
-                } catch (readError) {
-                  console.error('대체 파일 읽기 실패:', readError);
+                // 매칭되는 파일 중 packages가 있는 파일 찾기
+                for (const matchingFile of matchingFiles) {
+                  const latestFile = path.join(BOMTORI_OUTPUT_DIR, matchingFile);
+                  console.log(`[OSS] 대체 파일 시도: ${latestFile}`);
+                  try {
+                    const dashboardData = JSON.parse(await fs.readFile(latestFile, 'utf-8'));
+                    const filePackages = dashboardData.packages || [];
+                    console.log(`[OSS] ${matchingFile}에서 packages: ${filePackages.length}개`);
+                    if (filePackages.length > 0) {
+                      packages = filePackages;
+                      console.log(`[OSS] ✅ 대체 파일에서 packages 배열 로드 완료: ${packages.length}개 패키지 (파일: ${matchingFile})`);
+                      console.log(`[OSS] packages 배열 샘플 (처음 3개):`, packages.slice(0, 3).map(p => ({ name: p.name, dependency_type: p.dependency_type })));
+                      break; // packages를 찾았으면 중단
+                    }
+                  } catch (readError) {
+                    console.error(`[OSS] ${matchingFile} 읽기 실패:`, readError);
+                  }
+                }
+              } else {
+                // 매칭되는 파일이 없으면 모든 dashboard.json 파일 시도
+                console.log(`[OSS] 매칭되는 파일이 없어서 모든 dashboard.json 파일 시도`);
+                for (const dashboardFile of dashboardFiles) {
+                  const filePath = path.join(BOMTORI_OUTPUT_DIR, dashboardFile);
+                  console.log(`[OSS] 파일 시도: ${filePath}`);
+                  try {
+                    const dashboardData = JSON.parse(await fs.readFile(filePath, 'utf-8'));
+                    const filePackages = dashboardData.packages || [];
+                    console.log(`[OSS] ${dashboardFile}에서 packages: ${filePackages.length}개`);
+                    if (filePackages.length > 0) {
+                      packages = filePackages;
+                      console.log(`[OSS] ✅ ${dashboardFile}에서 packages 배열 로드 완료: ${packages.length}개 패키지`);
+                      console.log(`[OSS] packages 배열 샘플 (처음 3개):`, packages.slice(0, 3).map(p => ({ name: p.name, dependency_type: p.dependency_type })));
+                      break; // packages를 찾았으면 중단
+                    }
+                  } catch (readError) {
+                    console.error(`[OSS] ${dashboardFile} 읽기 실패:`, readError);
+                  }
                 }
               }
             } catch (dirError) {
-              console.error('output 디렉토리 읽기 실패:', dirError);
+              console.error('[OSS] output 디렉토리 읽기 실패:', dirError);
             }
           }
         } catch (loadError) {
-          console.error('dashboard.json 파일에서 packages 로드 오류:', loadError);
+          console.error('[OSS] dashboard.json 파일에서 packages 로드 오류:', loadError);
         }
+      }
+      
+      // packages가 아직 로드되지 않았으면 무조건 모든 dashboard.json 파일을 확인하여 로드 시도
+      if (packages.length === 0) {
+        console.log(`[OSS] ⚠️ packages가 0개이므로 모든 dashboard.json 파일에서 packages 로드 시도`);
+        console.log(`[OSS] BOMTORI_OUTPUT_DIR 절대 경로: ${BOMTORI_OUTPUT_DIR}`);
+        console.log(`[OSS] __dirname: ${__dirname}`);
+        console.log(`[OSS] BOMTORI_ROOT: ${BOMTORI_ROOT}`);
+        
+        try {
+          // 디렉토리 존재 확인
+          try {
+            await fs.access(BOMTORI_OUTPUT_DIR);
+            console.log(`[OSS] ✅ BOMTORI_OUTPUT_DIR 존재 확인됨`);
+          } catch (accessError) {
+            console.error(`[OSS] ❌ BOMTORI_OUTPUT_DIR 접근 실패:`, accessError.message);
+            console.error(`[OSS] 경로: ${BOMTORI_OUTPUT_DIR}`);
+          }
+          
+          const allFiles = await fs.readdir(BOMTORI_OUTPUT_DIR);
+          console.log(`[OSS] 모든 파일 (${allFiles.length}개):`, allFiles);
+          const dashboardFiles = allFiles.filter(f => f.includes('dashboard.json'));
+          console.log(`[OSS] 발견된 dashboard.json 파일들 (${dashboardFiles.length}개):`, dashboardFiles);
+          
+          if (dashboardFiles.length > 0) {
+            // 모든 dashboard.json 파일을 시도하여 packages가 있는 파일 찾기
+            for (const dashboardFile of dashboardFiles) {
+              const filePath = path.join(BOMTORI_OUTPUT_DIR, dashboardFile);
+              console.log(`[OSS] 📄 파일 시도: ${filePath}`);
+              try {
+                const fileStats = await fs.stat(filePath);
+                console.log(`[OSS] 파일 크기: ${fileStats.size} bytes`);
+                
+                const dashboardData = JSON.parse(await fs.readFile(filePath, 'utf-8'));
+                const filePackages = dashboardData.packages || [];
+                console.log(`[OSS] ${dashboardFile}에서 packages: ${filePackages.length}개`);
+                
+                if (filePackages.length > 0) {
+                  packages = filePackages;
+                  console.log(`[OSS] ✅✅✅ ${dashboardFile}에서 packages 배열 로드 완료: ${packages.length}개 패키지 ✅✅✅`);
+                  console.log(`[OSS] packages 배열 샘플 (처음 3개):`, packages.slice(0, 3).map(p => ({ name: p.name, dependency_type: p.dependency_type })));
+                  break; // packages를 찾았으면 중단
+                } else {
+                  console.log(`[OSS] ⚠️ ${dashboardFile}에 packages 배열이 비어있거나 없습니다.`);
+                }
+              } catch (readError) {
+                console.error(`[OSS] ❌ ${dashboardFile} 읽기 실패:`, readError.message);
+                console.error(`[OSS] 에러 스택:`, readError.stack);
+              }
+            }
+          } else {
+            console.log(`[OSS] ❌ dashboard.json 파일을 찾을 수 없습니다.`);
+          }
+        } catch (dirError) {
+          console.error('[OSS] ❌ output 디렉토리 읽기 실패:', dirError.message);
+          console.error('[OSS] 에러 스택:', dirError.stack);
+        }
+      }
+      
+      // packages가 여전히 0개이면 무조건 모든 dashboard.json 파일에서 찾기
+      if (packages.length === 0) {
+        console.log(`[OSS] ⚠️⚠️⚠️ 최종 확인: packages가 0개이므로 강제로 모든 dashboard.json 파일 확인 ⚠️⚠️⚠️`);
+        try {
+          const allFiles = await fs.readdir(BOMTORI_OUTPUT_DIR);
+          console.log(`[OSS] BOMTORI_OUTPUT_DIR 절대 경로: ${BOMTORI_OUTPUT_DIR}`);
+          console.log(`[OSS] 모든 파일 (${allFiles.length}개):`, allFiles);
+          const dashboardFiles = allFiles.filter(f => f.includes('dashboard.json'));
+          console.log(`[OSS] 발견된 dashboard.json 파일들 (${dashboardFiles.length}개):`, dashboardFiles);
+          
+          // 모든 dashboard.json 파일을 순회하여 packages가 있는 파일 찾기
+          for (const dashboardFile of dashboardFiles) {
+            const filePath = path.join(BOMTORI_OUTPUT_DIR, dashboardFile);
+            console.log(`[OSS] 📄 파일 읽기 시도: ${filePath}`);
+            try {
+              const fileStats = await fs.stat(filePath);
+              console.log(`[OSS] 파일 크기: ${fileStats.size} bytes, 수정 시간: ${fileStats.mtime}`);
+              
+              const fileContent = await fs.readFile(filePath, 'utf-8');
+              console.log(`[OSS] 파일 내용 길이: ${fileContent.length} characters`);
+              
+              const dashboardData = JSON.parse(fileContent);
+              const filePackages = dashboardData.packages || [];
+              console.log(`[OSS] ${dashboardFile}에서 packages: ${filePackages.length}개`);
+              
+              if (filePackages.length > 0) {
+                packages = filePackages;
+                console.log(`[OSS] ✅✅✅ 최종 성공: ${dashboardFile}에서 ${packages.length}개 패키지 로드 ✅✅✅`);
+                console.log(`[OSS] packages 샘플 (처음 5개):`, packages.slice(0, 5).map(p => ({ 
+                  name: p.name, 
+                  dependency_type: p.dependency_type,
+                  version: p.version 
+                })));
+                break;
+              } else {
+                console.log(`[OSS] ⚠️ ${dashboardFile}에 packages 배열이 비어있습니다.`);
+              }
+            } catch (readError) {
+              console.error(`[OSS] ❌ ${dashboardFile} 읽기 실패:`, readError.message);
+              console.error(`[OSS] 에러 스택:`, readError.stack);
+            }
+          }
+        } catch (dirError) {
+          console.error('[OSS] ❌ 디렉토리 읽기 실패:', dirError.message);
+          console.error('[OSS] 에러 스택:', dirError.stack);
+        }
+      }
+      
+      console.log(`[OSS] ========== 최종 응답 전송 ==========`);
+      console.log(`[OSS] findings: ${findings.length}개`);
+      console.log(`[OSS] packages: ${packages.length}개`);
+      if (packages.length > 0) {
+        console.log(`[OSS] packages 샘플:`, packages.slice(0, 3).map(p => ({ name: p.name, dependency_type: p.dependency_type })));
+      }
+      
+      // CDX JSON 파일에서 dependencies 정보 추출
+      let cdxDependencies = null;
+      try {
+        let cdxFilePath = null;
+        
+        // dashboard.json 파일이 로드된 경우, 같은 이름의 CDX JSON 파일 찾기
+        // dashboard.json 파일 경로 찾기
+        let dashboardFilePath = null;
+        
+        if (actualScanPath || scan_id) {
+          let repoName = '';
+          if (actualScanPath) {
+            // GitHub URL인 경우
+            if (actualScanPath.includes('github.com')) {
+              const match = actualScanPath.match(/github\.com\/([^\/]+\/[^\/]+)/);
+              if (match) {
+                repoName = match[1].replace(/[^a-zA-Z0-9_-]/g, '_');
+              }
+            } else {
+              // 로컬 경로인 경우
+              repoName = path.basename(actualScanPath.replace(/\.git$/, ''));
+              repoName = repoName.replace(/[^a-zA-Z0-9_-]/g, '_');
+            }
+          } else {
+            repoName = scan_id.replace(/[^a-zA-Z0-9_-]/g, '_');
+          }
+          
+          // dashboard.json과 같은 이름으로 sbom.cdx.json 파일 찾기
+          const possibleCdxFiles = [
+            `${repoName}-sbom.cdx.json`,
+            `${repoName}.sbom.cdx.json`,
+            `${repoName}-dashboard.json`.replace('-dashboard.json', '-sbom.cdx.json')
+          ];
+          
+          for (const fileName of possibleCdxFiles) {
+            const testPath = path.join(BOMTORI_OUTPUT_DIR, fileName);
+            try {
+              await fs.access(testPath);
+              cdxFilePath = testPath;
+              console.log(`[OSS] CDX JSON 파일 발견: ${fileName}`);
+              break;
+            } catch (e) {
+              // 파일 없음, 다음 시도
+            }
+          }
+        }
+        
+        // 파일명 패턴으로 찾지 못했으면 모든 .sbom.cdx.json 파일 확인
+        if (!cdxFilePath) {
+          try {
+            const allFiles = await fs.readdir(BOMTORI_OUTPUT_DIR);
+            const cdxFiles = allFiles.filter(f => f.includes('sbom.cdx.json') || (f.includes('.cdx.json') && !f.includes('metadata')));
+            if (cdxFiles.length > 0) {
+              // 파일 수정 시간으로 정렬하여 가장 최근 파일 사용
+              const cdxFilesWithStats = await Promise.all(
+                cdxFiles.map(async (file) => {
+                  const filePath = path.join(BOMTORI_OUTPUT_DIR, file);
+                  const stats = await fs.stat(filePath);
+                  return { file, path: filePath, mtime: stats.mtime };
+                })
+              );
+              cdxFilesWithStats.sort((a, b) => b.mtime - a.mtime);
+              cdxFilePath = cdxFilesWithStats[0].path;
+              console.log(`[OSS] CDX JSON 파일 발견 (가장 최근): ${cdxFilesWithStats[0].file}`);
+            }
+          } catch (e) {
+            console.log(`[OSS] CDX JSON 파일 검색 실패:`, e.message);
+          }
+        }
+        
+        // CDX JSON 파일 읽기
+        if (cdxFilePath) {
+          const cdxData = JSON.parse(await fs.readFile(cdxFilePath, 'utf-8'));
+          if (cdxData.dependencies && Array.isArray(cdxData.dependencies)) {
+            cdxDependencies = cdxData.dependencies;
+            console.log(`[OSS] ✅ CDX dependencies 추출 완료: ${cdxDependencies.length}개 의존성`);
+          } else {
+            console.log(`[OSS] ⚠️ CDX JSON 파일에 dependencies 배열이 없음`);
+          }
+        } else {
+          console.log(`[OSS] ⚠️ CDX JSON 파일을 찾을 수 없음`);
+        }
+      } catch (cdxError) {
+        console.log(`[OSS] CDX JSON dependencies 추출 실패 (무시):`, cdxError.message);
+        // 오류가 발생해도 계속 진행
       }
       
       res.json({
         success: true,
         data: findings,
-        packages: packages
+        packages: packages,
+        cdxDependencies: cdxDependencies // CDX JSON의 dependencies 정보 추가
       });
     } catch (error) {
       console.error('OSS 취약점 조회 오류:', error);
@@ -2548,9 +3045,6 @@ const riskAssessmentController = {
           // scan_path로 직접 조회 시도 (scan_id가 없는 경우)
           vulnerabilities = db.prepare('SELECT * FROM code_vulnerabilities WHERE scan_path = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_path);
         }
-      } else {
-        // 모든 취약점 조회
-        vulnerabilities = db.prepare('SELECT * FROM code_vulnerabilities ORDER BY scan_timestamp DESC, id DESC').all();
       }
       
       // raw_finding JSON 파싱
@@ -2601,13 +3095,26 @@ const riskAssessmentController = {
   // Tool Validation 취약점 조회
   getToolValidationVulnerabilities: async (req, res) => {
     try {
-      const { scan_id, scan_path } = req.query;
+      const { scan_id, scan_path, mcp_server_name } = req.query;
+      
+      // scan_id나 scan_path가 없으면 에러 반환 (모든 데이터 반환 방지)
+      if (!scan_id && !scan_path) {
+        return res.status(400).json({
+          success: false,
+          message: 'scan_id 또는 scan_path가 필요합니다.'
+        });
+      }
       
       let vulnerabilities = [];
       
       if (scan_id) {
         // scan_id로 조회
-        vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_id);
+        if (mcp_server_name) {
+          // mcp_server_name이 있으면 mcp_server_name으로 필터링
+          vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE scan_id = ? AND mcp_server_name = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_id, mcp_server_name);
+        } else {
+          vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(scan_id);
+        }
       } else if (scan_path) {
         // scan_path 정규화 (GitHub URL의 경우 .git 제거, 소문자 변환)
         let normalizedScanPath = scan_path;
@@ -2615,14 +3122,26 @@ const riskAssessmentController = {
           normalizedScanPath = scan_path.replace(/\.git$/i, '').toLowerCase();
         }
         
-        // 정규화된 scan_path로 최신 스캔 결과 조회
-        // 먼저 정확히 일치하는 것 찾기
-        let latestScan = db.prepare('SELECT DISTINCT scan_id FROM tool_validation_vulnerabilities WHERE LOWER(REPLACE(scan_path, \'.git\', \'\')) = ? ORDER BY scan_timestamp DESC LIMIT 1').get(normalizedScanPath);
-        if (latestScan && latestScan.scan_id) {
-          vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(latestScan.scan_id);
+        // mcp_server_name이 있으면 추가 필터링
+        if (mcp_server_name) {
+          // 정규화된 scan_path로 최신 스캔 결과 조회 (mcp_server_name으로 필터링)
+          let latestScan = db.prepare('SELECT DISTINCT scan_id FROM tool_validation_vulnerabilities WHERE LOWER(REPLACE(scan_path, \'.git\', \'\')) = ? AND mcp_server_name = ? ORDER BY scan_timestamp DESC LIMIT 1').get(normalizedScanPath, mcp_server_name);
+          if (latestScan && latestScan.scan_id) {
+            vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE scan_id = ? AND mcp_server_name = ? ORDER BY scan_timestamp DESC, id DESC').all(latestScan.scan_id, mcp_server_name);
+          } else {
+            // 정규화된 scan_path와 mcp_server_name으로 직접 조회 시도
+            vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE LOWER(REPLACE(scan_path, \'.git\', \'\')) = ? AND mcp_server_name = ? ORDER BY scan_timestamp DESC, id DESC').all(normalizedScanPath, mcp_server_name);
+          }
         } else {
-          // 정규화된 scan_path로 직접 조회 시도 (scan_id가 없는 경우)
-          vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE LOWER(REPLACE(scan_path, \'.git\', \'\')) = ? ORDER BY scan_timestamp DESC, id DESC').all(normalizedScanPath);
+          // 정규화된 scan_path로 최신 스캔 결과 조회
+          // 먼저 정확히 일치하는 것 찾기
+          let latestScan = db.prepare('SELECT DISTINCT scan_id FROM tool_validation_vulnerabilities WHERE LOWER(REPLACE(scan_path, \'.git\', \'\')) = ? ORDER BY scan_timestamp DESC LIMIT 1').get(normalizedScanPath);
+          if (latestScan && latestScan.scan_id) {
+            vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE scan_id = ? ORDER BY scan_timestamp DESC, id DESC').all(latestScan.scan_id);
+          } else {
+            // 정규화된 scan_path로 직접 조회 시도 (scan_id가 없는 경우)
+            vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities WHERE LOWER(REPLACE(scan_path, \'.git\', \'\')) = ? ORDER BY scan_timestamp DESC, id DESC').all(normalizedScanPath);
+          }
         }
         
         // 데이터베이스에 데이터가 없으면, 리포트 파일에서 직접 로드 시도
@@ -2915,9 +3434,6 @@ const riskAssessmentController = {
             console.error('리포트 파일에서 로드 오류:', fileError);
           }
         }
-      } else {
-        // 모든 취약점 조회
-        vulnerabilities = db.prepare('SELECT * FROM tool_validation_vulnerabilities ORDER BY scan_timestamp DESC, id DESC').all();
       }
       
       // raw_data JSON 파싱

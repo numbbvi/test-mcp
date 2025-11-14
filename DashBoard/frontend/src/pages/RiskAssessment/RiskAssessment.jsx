@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import Pagination from '../../components/Pagination';
 import './RiskAssessment.css';
 
@@ -17,7 +18,6 @@ const RiskAssessment = () => {
   const [mcpServers, setMcpServers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [serverFilter, setServerFilter] = useState('all'); // all, pending, approved
-  const [serverCounts, setServerCounts] = useState({ all: 0, pending: 0, approved: 0 }); // 각 탭별 서버 개수
   const [analyzingServers, setAnalyzingServers] = useState({}); // { serverId: true/false }
   const [analysisProgressServers, setAnalysisProgressServers] = useState({}); // { serverId: progress }
   const [scanErrors, setScanErrors] = useState({}); // { serverId: errorMessage }
@@ -34,28 +34,27 @@ const RiskAssessment = () => {
   const [showMcpInfoModal, setShowMcpInfoModal] = useState(false);
   const [packagesData, setPackagesData] = useState([]);
   const [toolValidationReport, setToolValidationReport] = useState(null); // Tool Validation 리포트 데이터 (tool 정보 포함)
-  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0, limit: 8 });
+  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0, limit: 20 });
 
   // 상태 뱃지 표시 함수
   const getStatusBadge = (status) => {
     if (!status) return null;
     const statusMap = {
-      'pending': { text: '대기중', color: '#f59e0b', bgColor: '#fef3c7' },
-      'approved': { text: '승인됨', color: '#10b981', bgColor: '#d1fae5' },
-      'rejected': { text: '거부됨', color: '#ef4444', bgColor: '#fee2e2' }
+      'pending': { text: '대기중', color: '#856404', bgColor: '#fff3cd' },
+      'approved': { text: '승인됨', color: '#155724', bgColor: '#d4edda' },
+      'rejected': { text: '거부됨', color: '#721c24', bgColor: '#f8d7da' }
     };
     const statusInfo = statusMap[status] || { text: status, color: '#6b7280', bgColor: '#f3f4f6' };
     
     return (
       <span style={{
         display: 'inline-block',
-        padding: '4px 8px',
-        borderRadius: '4px',
-        fontSize: '0.75rem',
-        fontWeight: '500',
+        padding: '4px 12px',
+        borderRadius: '6px',
+        fontSize: '0.85rem',
+        fontWeight: '600',
         color: statusInfo.color,
-        backgroundColor: statusInfo.bgColor,
-        border: `1px solid ${statusInfo.color}20`
+        backgroundColor: statusInfo.bgColor
       }}>
         {statusInfo.text}
       </span>
@@ -205,7 +204,8 @@ const RiskAssessment = () => {
                   ...prev,
                   [server.id]: {
                     bomtori: progress.bomtori !== null ? progress.bomtori : 0,
-                    scanner: progress.scanner || 0
+                    scanner: progress.scanner || 0,
+                    toolVet: progress.toolVet !== null ? progress.toolVet : 0
                   }
                 }));
                 
@@ -238,8 +238,11 @@ const RiskAssessment = () => {
                 // 둘 다 완료되었는지 확인
                 if (progress.status === 'completed') {
                   // 완료 후 결과 로드
+                  // 서버 이름을 쿼리 파라미터로 추가하여 해당 서버의 데이터만 가져오도록 함
+                  const serverNameParam = server.name ? `&mcp_server_name=${encodeURIComponent(server.name)}` : '';
+                  
                   try {
-                    const vulnRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}`, {
+                    const vulnRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
                       headers: {
                         'Authorization': `Bearer ${token}`
                       }
@@ -255,7 +258,7 @@ const RiskAssessment = () => {
                     
                     // OSS Vulnerabilities 로드
                     try {
-                      const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
+                      const ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
                         headers: {
                           'Authorization': `Bearer ${token}`
                         }
@@ -265,7 +268,12 @@ const RiskAssessment = () => {
                       if (ossData.success) {
                         // packages 배열도 저장 (license 정보 포함)
                         // packages가 없어도 빈 배열로 설정하여 취약점이 없는 패키지 필터링이 작동하도록 함
-                        setPackagesData(Array.isArray(ossData.packages) ? ossData.packages : []);
+                        const packagesArray = Array.isArray(ossData.packages) ? ossData.packages : [];
+                        // CDX dependencies 정보도 함께 저장
+                        if (ossData.cdxDependencies && Array.isArray(ossData.cdxDependencies)) {
+                          packagesArray.cdxDependencies = ossData.cdxDependencies;
+                        }
+                        setPackagesData(packagesArray);
                         
                         if (ossData.data) {
                         setOssIssues(ossData.data);
@@ -284,7 +292,7 @@ const RiskAssessment = () => {
                     
                     // Tool Validation 데이터 로드
                     try {
-                      const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(server.github_link || server.file_path || '')}`, {
+                      const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
                         headers: {
                           'Authorization': `Bearer ${token}`
                         }
@@ -447,7 +455,12 @@ const RiskAssessment = () => {
               if (ossData.success) {
                 // packages 배열도 저장 (license 정보 포함)
                 // packages가 없어도 빈 배열로 설정하여 취약점이 없는 패키지 필터링이 작동하도록 함
-                setPackagesData(Array.isArray(ossData.packages) ? ossData.packages : []);
+                const packagesArray = Array.isArray(ossData.packages) ? ossData.packages : [];
+                // CDX dependencies 정보도 함께 저장
+                if (ossData.cdxDependencies && Array.isArray(ossData.cdxDependencies)) {
+                  packagesArray.cdxDependencies = ossData.cdxDependencies;
+                }
+                setPackagesData(packagesArray);
                 
                 if (ossData.data) {
                 setOssIssues(ossData.data);
@@ -476,8 +489,9 @@ const RiskAssessment = () => {
         }
         
         // Tool Validation 데이터 로드
+        if (scanId) {
         try {
-          const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(analysisUrl)}`, {
+            const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
@@ -491,6 +505,9 @@ const RiskAssessment = () => {
           }
         } catch (error) {
           console.error('Tool Validation 데이터 로드 실패:', error);
+            setToolValidationIssues([]);
+          }
+        } else {
           setToolValidationIssues([]);
         }
         
@@ -545,16 +562,7 @@ const RiskAssessment = () => {
         });
         const data = await res.json();
         if (data.success) {
-          const servers = data.data || [];
-          setMcpServers(servers);
-          
-          // 현재 필터에 맞는 개수 업데이트
-          const filteredCount = servers.filter(s => s.status !== 'rejected').length;
-          setServerCounts(prev => ({
-            ...prev,
-            [serverFilter === 'all' ? 'all' : serverFilter]: filteredCount
-          }));
-          
+          setMcpServers(data.data || []);
           // 페이지 필터 변경 시 첫 페이지로 리셋
           setPagination(prev => ({ ...prev, page: 1 }));
         }
@@ -567,51 +575,6 @@ const RiskAssessment = () => {
       loadMcpServers();
     }
   }, [viewMode, serverFilter]);
-
-  // 각 탭별 서버 개수 가져오기
-  useEffect(() => {
-    const fetchServerCounts = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        
-        // 각 상태별로 서버 개수 가져오기
-        const [allRes, pendingRes, approvedRes] = await Promise.all([
-          fetch(`http://localhost:3001/api/marketplace?status=all&limit=10000`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch(`http://localhost:3001/api/marketplace?status=pending&limit=10000`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch(`http://localhost:3001/api/marketplace?status=approved&limit=10000`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          })
-        ]);
-        
-        const [allData, pendingData, approvedData] = await Promise.all([
-          allRes.json(),
-          pendingRes.json(),
-          approvedRes.json()
-        ]);
-        
-        // 거부된 서버 제외하고 개수 계산
-        const allCount = (allData.success ? (allData.data || []).filter(s => s.status !== 'rejected').length : 0);
-        const pendingCount = (pendingData.success ? (pendingData.data || []).filter(s => s.status !== 'rejected').length : 0);
-        const approvedCount = (approvedData.success ? (approvedData.data || []).filter(s => s.status !== 'rejected').length : 0);
-        
-        setServerCounts({
-          all: allCount,
-          pending: pendingCount,
-          approved: approvedCount
-        });
-      } catch (error) {
-        console.error('서버 개수 조회 실패:', error);
-      }
-    };
-    
-    if (viewMode === 'list') {
-      fetchServerCounts();
-    }
-  }, [viewMode]);
 
   // 검색어 변경 시 첫 페이지로 리셋
   useEffect(() => {
@@ -638,16 +601,19 @@ const RiskAssessment = () => {
         try {
           const token = localStorage.getItem('token');
           
+          // 서버 이름을 쿼리 파라미터로 추가하여 해당 서버의 데이터만 가져오도록 함
+          const serverNameParam = serverName ? `&mcp_server_name=${encodeURIComponent(serverName)}` : '';
+          
           // Code Vulnerabilities 로드
           let codeRes;
           if (scanId) {
-            codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}`, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          });
+            codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
           } else if (scanPath) {
-            codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+            codeRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}${serverNameParam}`, {
               headers: {
                 'Authorization': `Bearer ${token}`
               }
@@ -669,13 +635,13 @@ const RiskAssessment = () => {
           try {
             let ossRes;
             if (scanId) {
-              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`, {
-              headers: {
-                'Authorization': `Bearer ${token}`
-              }
-            });
+              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`
+                }
+              });
             } else if (scanPath) {
-              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}`, {
+              ossRes = await fetch(`http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}${serverNameParam}`, {
                 headers: {
                   'Authorization': `Bearer ${token}`
                 }
@@ -689,7 +655,12 @@ const RiskAssessment = () => {
               setOssIssues(ossData.data);
                 // packages 배열도 저장 (license 정보 포함)
                 // packages가 없어도 빈 배열로 설정하여 취약점이 없는 패키지 필터링이 작동하도록 함
-                setPackagesData(Array.isArray(ossData.packages) ? ossData.packages : []);
+                const packagesArray = Array.isArray(ossData.packages) ? ossData.packages : [];
+                // CDX dependencies 정보도 함께 저장
+                if (ossData.cdxDependencies && Array.isArray(ossData.cdxDependencies)) {
+                  packagesArray.cdxDependencies = ossData.cdxDependencies;
+                }
+                setPackagesData(packagesArray);
                 console.log('OSS 데이터 로드:', {
                   취약점개수: ossData.data?.length || 0,
                   packages개수: Array.isArray(ossData.packages) ? ossData.packages.length : 0
@@ -706,15 +677,29 @@ const RiskAssessment = () => {
           
           // Tool Validation 데이터 로드
           try {
-            const toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(githubUrl || scanPath)}`, {
-              headers: {
-                'Authorization': `Bearer ${token}`
-              }
-            });
+            let toolValidationRes;
+            if (scanId) {
+              toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}${serverNameParam}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`
+                }
+              });
+            } else if (scanPath) {
+              toolValidationRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(scanPath)}${serverNameParam}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`
+                }
+              });
+            }
+            
+            if (toolValidationRes) {
             const toolValidationData = await toolValidationRes.json();
             
             if (toolValidationData.success && toolValidationData.data) {
               setToolValidationIssues(toolValidationData.data);
+              } else {
+                setToolValidationIssues([]);
+              }
             } else {
           setToolValidationIssues([]);
             }
@@ -793,17 +778,48 @@ const RiskAssessment = () => {
     };
   }, [selectedOssIssue]);
 
-  // Tool Validation 리포트 데이터 가져오기 (tool 정보 포함)
+  // Tool Validation 리포트 및 취약점 데이터 가져오기
   useEffect(() => {
-    const fetchToolValidationReport = async () => {
-      if (selectedTab === 'Tool Validation' && selectedIssue?.tool_name && analysisUrl) {
+    const fetchToolValidationData = async () => {
+      // Total Vulnerabilities 탭 또는 Tool Validation 탭에서 데이터 로드
+      if (selectedTab === 'Total Vulnerabilities' || selectedTab === 'Tool Validation') {
         try {
           const token = localStorage.getItem('token');
-          const reportRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-reports?scan_path=${encodeURIComponent(analysisUrl)}`, {
+          const scanId = localStorage.getItem('riskAssessmentScanId');
+          const scanPath = localStorage.getItem('riskAssessmentScanPath');
+          const currentAnalysisUrl = analysisUrl || scanPath;
+          
+          console.log('[Tool Validation] 데이터 로드 시작:', {
+            selectedTab,
+            scanId,
+            scanPath,
+            analysisUrl,
+            currentAnalysisUrl
+          });
+          
+          // Tool Validation 리포트 로드
+          let reportRes;
+          if (scanId) {
+            // scan_id가 있으면 우선 사용
+            console.log('[Tool Validation Report] scan_id로 로드:', scanId);
+            reportRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-reports?scan_id=${scanId}`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
           });
+          } else if (currentAnalysisUrl) {
+            // scan_id가 없으면 scan_path 사용
+            console.log('[Tool Validation Report] scan_path로 로드:', currentAnalysisUrl);
+            reportRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-reports?scan_path=${encodeURIComponent(currentAnalysisUrl)}`, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
+          } else {
+            console.warn('[Tool Validation Report] scanId와 analysisUrl 모두 없음 - 리포트 로드 건너뜀');
+          }
+          
+          if (reportRes) {
           const reportData = await reportRes.json();
           
           if (reportData.success && reportData.data && reportData.data.length > 0) {
@@ -813,20 +829,189 @@ const RiskAssessment = () => {
               report.report_data = JSON.parse(report.report_data);
             }
             setToolValidationReport(report);
+            console.log('[Tool Validation Report] 로드 성공:', {
+              total_tools: report.report_data?.total_tools,
+              tools_length: report.report_data?.tools?.length
+            });
           } else {
             setToolValidationReport(null);
+            console.log('[Tool Validation Report] 데이터 없음');
           }
-        } catch (error) {
-          console.error('Tool Validation 리포트 데이터 로드 실패:', error);
+          } else {
           setToolValidationReport(null);
         }
+          
+          // Tool Validation 취약점 데이터 로드
+          let vulnerabilitiesRes;
+          if (scanId) {
+            // scan_id가 있으면 우선 사용
+            console.log('[Tool Validation Vulnerabilities] scan_id로 로드:', scanId);
+            vulnerabilitiesRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_id=${scanId}`, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
+          } else if (currentAnalysisUrl) {
+            // scan_id가 없으면 scan_path 사용
+            console.log('[Tool Validation Vulnerabilities] scan_path로 로드:', currentAnalysisUrl);
+            vulnerabilitiesRes = await fetch(`http://localhost:3001/api/risk-assessment/tool-validation-vulnerabilities?scan_path=${encodeURIComponent(currentAnalysisUrl)}`, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
       } else {
+            console.warn('[Tool Validation Vulnerabilities] scanId와 analysisUrl 모두 없음 - 취약점 데이터 로드 건너뜀');
+            setToolValidationIssues([]);
+          }
+          
+          if (vulnerabilitiesRes) {
+            const vulnerabilitiesData = await vulnerabilitiesRes.json();
+            
+            console.log('[Tool Validation Vulnerabilities] API 응답:', {
+              success: vulnerabilitiesData.success,
+              dataLength: vulnerabilitiesData.data?.length || 0
+            });
+            
+            if (vulnerabilitiesData.success && vulnerabilitiesData.data) {
+              setToolValidationIssues(vulnerabilitiesData.data);
+              console.log('[Tool Validation Vulnerabilities] 로드 성공:', {
+                취약점개수: vulnerabilitiesData.data?.length || 0
+              });
+            } else {
+              setToolValidationIssues([]);
+              console.log('[Tool Validation Vulnerabilities] 데이터 없음');
+            }
+          } else {
+            setToolValidationIssues([]);
+          }
+        } catch (error) {
+          console.error('Tool Validation 데이터 로드 실패:', error);
         setToolValidationReport(null);
+          setToolValidationIssues([]);
+        }
+      } else if (selectedTab !== 'Total Vulnerabilities' && selectedTab !== 'Tool Validation') {
+        // 다른 탭에서는 리포트를 초기화하지 않음 (Total Vulnerabilities에서 사용할 수 있도록)
       }
     };
 
-    fetchToolValidationReport();
-  }, [selectedTab, selectedIssue, analysisUrl]);
+    fetchToolValidationData();
+  }, [selectedTab, analysisUrl]);
+
+  // Total Vulnerabilities 탭에서 OSS 데이터 로드
+  useEffect(() => {
+    console.log('[Total Vulnerabilities] useEffect 실행:', {
+      selectedTab,
+      analysisUrl,
+      조건만족: selectedTab === 'Total Vulnerabilities' && analysisUrl
+    });
+    
+    const fetchOssData = async () => {
+      console.log('[Total Vulnerabilities] fetchOssData 시작:', {
+        selectedTab,
+        analysisUrl,
+        조건만족: selectedTab === 'Total Vulnerabilities' && analysisUrl
+      });
+      
+      // Total Vulnerabilities 탭이면 analysisUrl이 없어도 데이터 로드 시도
+      if (selectedTab === 'Total Vulnerabilities') {
+        try {
+          const token = localStorage.getItem('token');
+          const scanId = localStorage.getItem('riskAssessmentScanId');
+          
+          console.log('[Total Vulnerabilities] API 호출 준비:', {
+            scanId,
+            analysisUrl,
+            token: token ? '있음' : '없음'
+          });
+          
+          let ossRes;
+          let apiUrl;
+          
+          // scan_id가 있으면 우선 사용, 없으면 scan_path 사용, 둘 다 없으면 모든 데이터 조회
+          if (scanId) {
+            apiUrl = `http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_id=${scanId}`;
+            console.log('[Total Vulnerabilities] scan_id로 API 호출:', apiUrl);
+            ossRes = await fetch(apiUrl, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
+          } else if (analysisUrl) {
+            apiUrl = `http://localhost:3001/api/risk-assessment/oss-vulnerabilities?scan_path=${encodeURIComponent(analysisUrl)}`;
+            console.log('[Total Vulnerabilities] scan_path로 API 호출:', apiUrl);
+            ossRes = await fetch(apiUrl, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
+          } else {
+            // scan_id와 analysisUrl이 모두 없으면 모든 데이터 조회
+            apiUrl = `http://localhost:3001/api/risk-assessment/oss-vulnerabilities`;
+            console.log('[Total Vulnerabilities] 모든 데이터 조회:', apiUrl);
+            ossRes = await fetch(apiUrl, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
+          }
+          
+          console.log('[Total Vulnerabilities] API 응답 상태:', {
+            status: ossRes.status,
+            statusText: ossRes.statusText,
+            ok: ossRes.ok
+          });
+          
+          if (ossRes) {
+            const ossData = await ossRes.json();
+            
+            console.log('[Total Vulnerabilities] OSS API 응답:', {
+              success: ossData.success,
+              dataLength: ossData.data?.length || 0,
+              packagesLength: ossData.packages?.length || 0,
+              packagesType: Array.isArray(ossData.packages) ? 'array' : typeof ossData.packages,
+              packagesSample: ossData.packages?.slice(0, 3) || '없음'
+            });
+            
+            if (ossData.success && ossData.data) {
+              setOssIssues(ossData.data);
+              const packagesArray = Array.isArray(ossData.packages) ? ossData.packages : [];
+              // CDX dependencies 정보도 함께 저장
+              if (ossData.cdxDependencies && Array.isArray(ossData.cdxDependencies)) {
+                packagesArray.cdxDependencies = ossData.cdxDependencies;
+              }
+              setPackagesData(packagesArray);
+              console.log('[Total Vulnerabilities] OSS 데이터 로드 성공:', {
+                취약점개수: ossData.data?.length || 0,
+                packages개수: packagesArray.length,
+                packagesSample: packagesArray.slice(0, 3)
+              });
+            } else {
+              setOssIssues([]);
+              setPackagesData([]);
+              console.log('[Total Vulnerabilities] OSS 데이터 없음');
+            }
+          }
+        } catch (error) {
+          console.error('[Total Vulnerabilities] ❌ OSS 데이터 로드 실패:', error);
+          console.error('[Total Vulnerabilities] 에러 상세:', {
+            message: error.message,
+            stack: error.stack
+          });
+          setOssIssues([]);
+          setPackagesData([]);
+        }
+      } else {
+        // Total Vulnerabilities 탭이 아니면 OSS 데이터를 로드하지 않음
+        // (다른 탭에서는 필요할 때 별도로 로드함)
+        console.log('[Total Vulnerabilities] OSS 데이터 로드 건너뜀:', {
+          selectedTab,
+          reason: selectedTab !== 'Total Vulnerabilities'
+        });
+      }
+    };
+
+    fetchOssData();
+  }, [selectedTab, analysisUrl]);
 
   // 심각도 점수 계산 함수 (CVSS 점수 우선, 없으면 심각도 텍스트를 점수로 변환)
   const getSeverityScore = (severity, cvss) => {
@@ -983,61 +1168,1160 @@ const RiskAssessment = () => {
   };
 
   const renderSBOMScannerContent = () => {
+    // CDX JSON의 dependencies를 기반으로 실제 depth 계산 함수
+    const calculateMaxDepthFromCDX = (packages, dependencies) => {
+      if (!dependencies || !Array.isArray(dependencies) || dependencies.length === 0) {
+        return { maxDepth: 0, packageDepthMap: new Map() };
+      }
+
+      // bom-ref를 key로 하는 의존성 그래프 구성
+      const dependencyGraph = new Map();
+      const packageRefMap = new Map(); // 패키지 이름 -> bom-ref 맵
+      const refToNameMap = new Map(); // bom-ref -> 패키지 이름 맵
+      
+      // 패키지 이름으로 bom-ref 찾기 위한 맵 생성
+      // packages 배열에서 bom-ref 정보 추출
+      packages.forEach(pkg => {
+        if (pkg.name) {
+          // 여러 가능한 ref 소스 확인
+          let ref = null;
+          if (pkg.bomRef) {
+            ref = pkg.bomRef;
+          } else if (pkg.purl) {
+            ref = pkg.purl;
+          } else if (pkg.purl_id) {
+            ref = pkg.purl_id;
+          }
+          
+          if (ref) {
+            packageRefMap.set(pkg.name, ref);
+            refToNameMap.set(ref, pkg.name);
+          }
+          
+          // purl을 bom-ref로 사용 (pkg:golang/name@version 형식)
+          if (pkg.purl && !ref) {
+            ref = pkg.purl;
+            packageRefMap.set(pkg.name, ref);
+            refToNameMap.set(ref, pkg.name);
+          }
+        }
+      });
+      
+      // dependencies에서도 ref와 패키지 이름 매칭 정보 수집
+      dependencies.forEach(dep => {
+        if (dep.ref && !refToNameMap.has(dep.ref)) {
+          // ref에서 패키지 이름 추출 시도 (pkg:golang/name@version 형식)
+          const match = dep.ref.match(/pkg:[^/]+\/([^@]+)/);
+          if (match) {
+            const extractedName = match[1];
+            refToNameMap.set(dep.ref, extractedName);
+            if (!packageRefMap.has(extractedName)) {
+              packageRefMap.set(extractedName, dep.ref);
+            }
+          }
+        }
+      });
+
+      // dependencies 배열을 그래프로 변환
+      dependencies.forEach(dep => {
+        if (dep.ref && dep.dependsOn && Array.isArray(dep.dependsOn)) {
+          dependencyGraph.set(dep.ref, dep.dependsOn);
+        }
+      });
+
+      // 루트 패키지 찾기 (의존성으로 참조되지 않는 패키지)
+      const rootRefs = new Set();
+      const allDependents = new Set();
+      
+      dependencyGraph.forEach((deps, ref) => {
+        rootRefs.add(ref);
+        deps.forEach(dep => allDependents.add(dep));
+      });
+      
+      // 의존성으로 참조되지 않는 패키지가 루트
+      allDependents.forEach(dep => rootRefs.delete(dep));
+      
+      // 각 패키지의 depth 계산 (DFS, 순환 참조 방지)
+      const depthMap = new Map();
+      const visiting = new Set(); // 현재 탐색 중인 경로 (순환 참조 감지용)
+      
+      const calculateDepth = (ref, currentDepth, path = new Set()) => {
+        // 순환 참조 감지
+        if (path.has(ref)) {
+          console.warn(`[Depth 계산] 순환 참조 발견: ${ref}`);
+          return depthMap.get(ref) || 0;
+        }
+        
+        // 이미 계산된 depth가 있고, 현재 경로가 더 깊지 않으면 재사용
+        if (depthMap.has(ref) && depthMap.get(ref) >= currentDepth) {
+          return depthMap.get(ref);
+        }
+        
+        // 현재 경로에 추가
+        const newPath = new Set(path);
+        newPath.add(ref);
+        
+        // 현재 depth 설정
+        depthMap.set(ref, currentDepth);
+        
+        // 의존성들의 depth 계산
+        const deps = dependencyGraph.get(ref);
+        if (deps && Array.isArray(deps)) {
+          deps.forEach(depRef => {
+            const depDepth = calculateDepth(depRef, currentDepth + 1, newPath);
+            // 의존성의 depth + 1이 현재보다 크면 업데이트
+            if (depDepth + 1 > currentDepth) {
+              depthMap.set(ref, depDepth + 1);
+            }
+          });
+        }
+        
+        return depthMap.get(ref);
+      };
+      
+      // 모든 루트 패키지에서 시작 (depth 0)
+      rootRefs.forEach(rootRef => {
+        calculateDepth(rootRef, 0, new Set());
+      });
+      
+      // 모든 의존성 패키지의 depth 계산 (루트에서 시작하지 않은 패키지들)
+      // 모든 dependsOn 패키지가 depth 계산되었는지 확인
+      allDependents.forEach(depRef => {
+        if (!depthMap.has(depRef)) {
+          // 이 패키지를 의존하는 부모 패키지들 중 최소 depth + 1
+          let minDepth = Infinity;
+          dependencyGraph.forEach((deps, parentRef) => {
+            if (deps.includes(depRef)) {
+              const parentDepth = depthMap.get(parentRef);
+              if (parentDepth !== undefined && parentDepth !== null) {
+                minDepth = Math.min(minDepth, parentDepth + 1);
+              }
+            }
+          });
+          if (minDepth !== Infinity) {
+            depthMap.set(depRef, minDepth);
+          } else {
+            // 부모를 찾을 수 없으면 depth 1로 설정 (직접 의존성으로 간주)
+            depthMap.set(depRef, 1);
+          }
+        }
+      });
+      
+      // 모든 의존성 패키지에 대해 한 번 더 확인 (재귀적으로 계산)
+      let changed = true;
+      let iterations = 0;
+      while (changed && iterations < 10) {
+        changed = false;
+        dependencyGraph.forEach((deps, ref) => {
+          if (!depthMap.has(ref)) {
+            // 이 패키지의 의존성 중 최대 depth 찾기
+            let maxDepDepth = -1;
+            deps.forEach(depRef => {
+              const depDepth = depthMap.get(depRef);
+              if (depDepth !== undefined && depDepth !== null) {
+                maxDepDepth = Math.max(maxDepDepth, depDepth);
+              }
+            });
+            if (maxDepDepth >= 0) {
+              depthMap.set(ref, maxDepDepth + 1);
+              changed = true;
+            }
+          }
+        });
+        iterations++;
+      }
+      
+      // 패키지 이름으로 depth 찾기
+      const packageDepthMap = new Map();
+      packages.forEach(pkg => {
+        if (pkg.name) {
+          // 여러 가능한 ref 소스 확인
+          let ref = pkg.bomRef || pkg.purl || pkg.purl_id || packageRefMap.get(pkg.name);
+          
+          // ref가 없으면 purl 형식으로 시도
+          if (!ref && pkg.name) {
+            // Go 패키지 이름을 purl 형식으로 변환
+            if (pkg.name.startsWith('golang.org/') || pkg.name.startsWith('github.com/')) {
+              const version = pkg.version || '';
+              ref = `pkg:golang/${pkg.name}${version ? '@' + version : ''}`;
+            }
+          }
+          
+          if (ref) {
+            // 직접 매칭
+            let depth = depthMap.get(ref);
+            if (depth === undefined || depth === null) {
+              // ref 부분 매칭 시도 (버전 정보 제외)
+              for (const [depRef, depDepth] of depthMap.entries()) {
+                if (depRef.includes(pkg.name) || ref.includes(pkg.name.replace(/^pkg:[^/]+\//, ''))) {
+                  depth = depDepth;
+                  break;
+                }
+              }
+            }
+            if (depth !== undefined && depth !== null) {
+              packageDepthMap.set(pkg.name, depth);
+            }
+          }
+        }
+      });
+      
+      // 최대 depth 찾기
+      let maxDepth = 0;
+      depthMap.forEach((depth) => {
+        if (depth > maxDepth) {
+          maxDepth = depth;
+        }
+      });
+      
+      return { maxDepth, packageDepthMap };
+    };
+
+    // OSS Vulnerabilities 통계 계산
+    const ossStats = (() => {
+      // packagesData가 있으면 사용, 없으면 ossIssues에서 추론
+      const allPackages = packagesData && packagesData.length > 0 ? packagesData : [];
+      const hasPackagesData = allPackages.length > 0;
+      
+      // CDX JSON dependencies 정보 (별도 state나 packagesData에서 전달)
+      // 백엔드에서 cdxDependencies를 별도로 전달하므로, 이는 별도 state로 관리하거나 packagesData의 속성으로 사용
+      const cdxDependencies = packagesData?.cdxDependencies || null;
+      
+      console.log('[ossStats 계산 시작]', {
+        packagesDataLength: packagesData?.length || 0,
+        allPackagesLength: allPackages.length,
+        hasPackagesData,
+        ossIssuesLength: ossIssues?.length || 0,
+        ossIssues: ossIssues?.slice(0, 3) // 처음 3개만 로그
+      });
+      
+      if (!hasPackagesData && (!ossIssues || ossIssues.length === 0)) {
+        console.log('[ossStats] 데이터 없음 - 빈 객체 반환');
+        return {
+          projectType: null,
+          totalPackages: 0,
+          directDependencies: 0,
+          transitiveDependencies: 0,
+          vulnerablePackages: 0,
+          reachableVulnerabilities: 0,
+          totalVulnerabilities: 0,
+          externalPackages: 0,
+          internalPackages: 0,
+          maxDepth: 0
+        };
+      }
+
+      // 프로젝트 타입 추론
+      let projectType = null;
+      if (hasPackagesData) {
+        // packagesData에서 프로젝트 타입 추론
+        const goPackages = allPackages.filter(pkg => 
+          pkg.name && (
+            pkg.name.startsWith('golang.org/') || 
+            pkg.name.startsWith('github.com/') ||
+            pkg.name.startsWith('go.uber.org/') ||
+            pkg.name.startsWith('google.golang.org/') ||
+            pkg.name.startsWith('gopkg.in/') ||
+            pkg.purl && pkg.purl.startsWith('pkg:golang/')
+          )
+        );
+        const npmPackages = allPackages.filter(pkg => 
+          pkg.name && 
+          !pkg.name.startsWith('golang.org/') && 
+          !pkg.name.startsWith('github.com/') && 
+          !pkg.name.startsWith('go.uber.org/') &&
+          !pkg.name.startsWith('google.golang.org/') &&
+          !pkg.name.startsWith('gopkg.in/') &&
+          !pkg.name.includes('/') &&
+          (!pkg.purl || pkg.purl.startsWith('pkg:npm/'))
+        );
+        
+        if (goPackages.length > npmPackages.length && goPackages.length > 0) {
+          projectType = 'Go';
+        } else if (npmPackages.length > 0) {
+          projectType = 'NPM';
+        }
+      } else {
+        // ossIssues에서 프로젝트 타입 추론
+        const goPackages = ossIssues.filter(issue => 
+          issue.package_name && (
+            issue.package_name.startsWith('golang.org/') || 
+            issue.package_name.startsWith('github.com/') ||
+            issue.package_name.startsWith('go.uber.org/') ||
+            issue.package_name.startsWith('google.golang.org/') ||
+            issue.package_name.startsWith('gopkg.in/')
+          )
+        );
+        const npmPackages = ossIssues.filter(issue => 
+          issue.package_name && 
+          !issue.package_name.startsWith('golang.org/') && 
+          !issue.package_name.startsWith('github.com/') && 
+          !issue.package_name.startsWith('go.uber.org/') &&
+          !issue.package_name.startsWith('google.golang.org/') &&
+          !issue.package_name.startsWith('gopkg.in/') &&
+          !issue.package_name.includes('/')
+        );
+        
+        if (goPackages.length > npmPackages.length && goPackages.length > 0) {
+          projectType = 'Go';
+        } else if (npmPackages.length > 0) {
+          projectType = 'NPM';
+        }
+      }
+
+      // 패키지별로 그룹화 (중복 제거, 메인 패키지 제외)
+      const uniquePackages = new Set();
+      const directDeps = new Set();
+      const transitiveDeps = new Set();
+      const vulnerablePkgs = new Set();
+      const externalPackages = new Set(); // 외부 패키지 (github.com, golang.org 등)
+      const internalPackages = new Set(); // 내부 패키지
+      const depthMap = new Map(); // 패키지별 depth
+      let reachableCount = 0;
+      let totalVulnCount = 0;
+      let maxDepth = 0;
+
+      // CDX dependencies로 depth 계산 (한 번만 실행)
+      let calculatedPackageDepthMap = null;
+      let calculatedMaxDepthFromCDX = 0;
+      if (cdxDependencies && Array.isArray(cdxDependencies) && cdxDependencies.length > 0) {
+        console.log('[ossStats] CDX dependencies로 depth 계산 시작...');
+        const result = calculateMaxDepthFromCDX(allPackages, cdxDependencies);
+        calculatedPackageDepthMap = result.packageDepthMap;
+        calculatedMaxDepthFromCDX = result.maxDepth;
+        console.log('[ossStats] CDX dependencies로 계산된 최대 depth:', calculatedMaxDepthFromCDX);
+      }
+
+      // packagesData에서 전체 패키지 정보 수집
+      if (hasPackagesData) {
+        console.log('[ossStats] packagesData 처리 시작, 총 패키지 수:', allPackages.length);
+        let processedCount = 0;
+        let skippedCount = 0;
+        
+        allPackages.forEach(pkg => {
+          if (!pkg.name) {
+            skippedCount++;
+            return;
+          }
+          
+          // 메인 패키지 제외: dependency_type이 null이거나 빈 값인 경우 제외
+          if (!pkg.dependency_type || pkg.dependency_type === '') {
+            skippedCount++;
+            return; // 메인 패키지는 제외
+          }
+
+          processedCount++;
+          uniquePackages.add(pkg.name);
+          
+          // 외부/내부 패키지 구분
+          const isExternal = pkg.name.includes('.') && 
+                            (pkg.name.startsWith('github.com/') ||
+                             pkg.name.startsWith('golang.org/') ||
+                             pkg.name.startsWith('go.uber.org/') ||
+                             pkg.name.startsWith('google.golang.org/') ||
+                             pkg.name.startsWith('gopkg.in/') ||
+                             pkg.name.includes('/'));
+          
+          if (isExternal) {
+            externalPackages.add(pkg.name);
+          } else {
+            internalPackages.add(pkg.name);
+          }
+          
+          if (pkg.dependency_type === 'direct') {
+            directDeps.add(pkg.name);
+          } else if (pkg.dependency_type === 'transitive') {
+            transitiveDeps.add(pkg.name);
+          }
+
+          // Depth 계산: CDX JSON dependencies를 사용하여 실제 depth 계산
+          let depth = 0;
+          
+          // 먼저 CDX dependencies에서 계산된 depth 사용
+          if (calculatedPackageDepthMap) {
+            const calculatedDepth = calculatedPackageDepthMap.get(pkg.name);
+            if (calculatedDepth !== undefined && calculatedDepth !== null) {
+              depth = calculatedDepth;
+            }
+          }
+          
+          // CDX dependencies로 계산되지 않았으면 패키지 데이터의 depth 필드 확인
+          if (depth === 0) {
+            if (pkg.dependency_depth !== undefined && pkg.dependency_depth !== null) {
+              depth = parseInt(pkg.dependency_depth) || 0;
+            } else if (pkg.depth !== undefined && pkg.depth !== null) {
+              depth = parseInt(pkg.depth) || 0;
+            } else {
+              // depth 정보가 없으면 dependency_type으로 추정 (fallback)
+          if (pkg.dependency_type === 'direct') {
+            depth = 1;
+          } else if (pkg.dependency_type === 'transitive') {
+                depth = 2; // 최소값, 실제로는 더 깊을 수 있음
+              }
+            }
+          }
+          
+          if (depth > maxDepth) {
+            maxDepth = depth;
+          }
+          if (!depthMap.has(pkg.name) || depthMap.get(pkg.name) < depth) {
+            depthMap.set(pkg.name, depth);
+          }
+        });
+        console.log('[ossStats] packagesData 처리 완료:', {
+          processedCount,
+          skippedCount,
+          uniquePackages: uniquePackages.size,
+          directDeps: directDeps.size,
+          transitiveDeps: transitiveDeps.size
+        });
+      }
+
+      // ossIssues에서 취약점 정보 수집
+      if (ossIssues && ossIssues.length > 0) {
+        console.log('[ossStats] ossIssues 처리 시작, 총 이슈 수:', ossIssues.length);
+        let processedIssues = 0;
+        let skippedIssues = 0;
+        let packageNameIssues = 0;
+        
+        // 처음 5개 패키지의 dependency_type 확인
+        const sampleIssues = ossIssues.slice(0, 5).filter(issue => issue.package_name);
+        console.log('[ossStats] 샘플 패키지 dependency_type:', sampleIssues.map(issue => ({
+          package_name: issue.package_name,
+          package_dependency_type: issue.package_dependency_type,
+          package_dependency_depth: issue.package_dependency_depth
+        })));
+        
+        ossIssues.forEach(issue => {
+          if (issue.package_name) {
+            packageNameIssues++;
+            
+            // package_dependency_type 확인
+            const depType = issue.package_dependency_type;
+            
+            // 메인 패키지 제외: package_dependency_type이 null이거나 빈 값인 경우 제외
+            // 하지만 stdlib은 제외하지 않음 (stdlib도 의존성으로 간주)
+            if (depType === null || depType === '' || depType === undefined) {
+              // stdlib은 제외하지 않음
+              if (issue.package_name && !issue.package_name.includes('stdlib') && !issue.package_name.startsWith('crypto/') && !issue.package_name.startsWith('net/')) {
+                skippedIssues++;
+                return; // 메인 패키지는 제외
+              }
+            }
+
+            processedIssues++;
+            // packagesData가 없으면 uniquePackages에도 추가
+            if (!hasPackagesData) {
+              uniquePackages.add(issue.package_name);
+              
+              // 외부/내부 패키지 구분
+              const isExternal = issue.package_name.includes('.') && 
+                                (issue.package_name.startsWith('github.com/') ||
+                                 issue.package_name.startsWith('golang.org/') ||
+                                 issue.package_name.startsWith('go.uber.org/') ||
+                                 issue.package_name.startsWith('google.golang.org/') ||
+                                 issue.package_name.startsWith('gopkg.in/') ||
+                                 issue.package_name.includes('/'));
+              
+              if (isExternal) {
+                externalPackages.add(issue.package_name);
+              } else {
+                internalPackages.add(issue.package_name);
+              }
+              
+              if (issue.package_dependency_type === 'direct') {
+                directDeps.add(issue.package_name);
+              } else if (issue.package_dependency_type === 'transitive') {
+                transitiveDeps.add(issue.package_name);
+              }
+
+              // Depth 정보 수집
+              const depth = issue.package_dependency_depth || issue.depth || 0;
+              if (depth > maxDepth) {
+                maxDepth = depth;
+              }
+              if (!depthMap.has(issue.package_name) || depthMap.get(issue.package_name) < depth) {
+                depthMap.set(issue.package_name, depth);
+              }
+            }
+
+            if (issue.vulnerability_id || issue.vulnerability_cve) {
+              vulnerablePkgs.add(issue.package_name);
+              totalVulnCount++;
+              
+              // reachable 정보 확인 (vulnerability 레벨 또는 functions 배열에서)
+              const isReachable = issue.reachable === 1 || issue.reachable === true || issue.reachable === '1' ||
+                                 (issue.functions && Array.isArray(issue.functions) && issue.functions.some(f => f.reachable === true));
+              if (isReachable) {
+                reachableCount++;
+              }
+            }
+          }
+        });
+        console.log('[ossStats] ossIssues 처리 완료:', {
+          packageNameIssues,
+          processedIssues,
+          skippedIssues,
+          uniquePackages: uniquePackages.size,
+          directDeps: directDeps.size,
+          transitiveDeps: transitiveDeps.size,
+          vulnerablePkgs: vulnerablePkgs.size,
+          reachableCount,
+          totalVulnCount,
+          externalPackages: externalPackages.size,
+          internalPackages: internalPackages.size
+        });
+      }
+
+      // 최종 maxDepth 계산: CDX에서 계산된 depth와 비교하여 최대값 사용
+      const finalMaxDepth = Math.max(maxDepth, calculatedMaxDepthFromCDX);
+
+      const result = {
+        projectType,
+        totalPackages: uniquePackages.size,
+        directDependencies: directDeps.size,
+        transitiveDependencies: transitiveDeps.size,
+        vulnerablePackages: vulnerablePkgs.size,
+        reachableVulnerabilities: reachableCount,
+        totalVulnerabilities: totalVulnCount,
+        externalPackages: externalPackages.size,
+        internalPackages: internalPackages.size,
+        maxDepth: finalMaxDepth
+      };
+      
+      console.log('[ossStats] 최종 계산 결과:', {
+        ...result,
+        calculatedMaxDepthFromCDX,
+        originalMaxDepth: maxDepth,
+        finalMaxDepth
+      });
+      return result;
+    })();
+
+    // Code Vulnerabilities 통계 계산
+    const codeStats = (() => {
+      if (!codeIssues || codeIssues.length === 0) {
+        return { 
+          vulnerabilityTypes: [], 
+          scannedFiles: 0, 
+          totalFiles: 0,
+          generalFindings: 0,
+          mcpFindings: 0
+        };
+      }
+
+      const vulnCount = {};
+      const scannedFilesSet = new Set(); // 스캔한 파일들
+      let generalFindings = 0;
+      let mcpFindings = 0;
+      
+      codeIssues.forEach(issue => {
+        // 스캔한 파일 수집
+        if (issue.file) {
+          scannedFilesSet.add(issue.file);
+        }
+        
+        // rule_id로 MCP 특화 취약점 구분 (mcp/로 시작하면 MCP 특화)
+        const isMcpFinding = issue.rule_id && issue.rule_id.startsWith('mcp/');
+        if (isMcpFinding) {
+          mcpFindings++;
+        } else {
+          generalFindings++;
+        }
+        
+        // vulnerability 필드를 우선 사용, 없으면 rule_id에서 추출
+        let vulnerabilityName = issue.vulnerability;
+        
+        if (!vulnerabilityName && issue.rule_id) {
+          // rule_id에서 접두사 제거하고 취약점 이름 추출
+          const parts = issue.rule_id.split('/');
+          if (parts.length > 1) {
+            const vulnerabilityNameFromRule = parts.slice(1).join('/');
+            vulnerabilityName = vulnerabilityNameFromRule
+              .split('-')
+              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ');
+          } else {
+            vulnerabilityName = issue.rule_id
+              .split('-')
+              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ');
+          }
+        }
+        
+        if (!vulnerabilityName) {
+          vulnerabilityName = issue.message || 'Unknown Vulnerability';
+        }
+        
+        vulnCount[vulnerabilityName] = (vulnCount[vulnerabilityName] || 0) + 1;
+      });
+
+      return {
+        vulnerabilityTypes: Object.entries(vulnCount).map(([name, value]) => ({
+          name,
+          value
+        })),
+        scannedFiles: scannedFilesSet.size,
+        totalFiles: scannedFilesSet.size, // 전체 파일 개수는 스캔한 파일 개수로 추정 (실제 전체 파일 개수는 별도 API 필요)
+        generalFindings: generalFindings,
+        mcpFindings: mcpFindings
+      };
+    })();
+
+    // Tool Validation 통계 계산
+    const toolValidationStats = (() => {
+      if (!toolValidationIssues || toolValidationIssues.length === 0) {
+        return { 
+          categoryCounts: [], 
+          externalHosts: [], 
+          totalEndpoints: 0, 
+          externalEndpoints: 0, 
+          internalEndpoints: 0,
+          toolsWithRisk: 0
+        };
+      }
+
+      const categoryCount = {};
+      const externalHostsSet = new Set();
+      const endpointsSet = new Set(); // (host, method, path) 조합
+      const externalEndpointsSet = new Set();
+      const internalEndpointsSet = new Set();
+      const toolsWithRiskSet = new Set(); // risk가 발견된 tool들
+      
+      toolValidationIssues.forEach(issue => {
+        const categoryCode = issue.category_code || 'Unknown';
+        categoryCount[categoryCode] = (categoryCount[categoryCode] || 0) + 1;
+        
+        // risk가 발견된 tool 추적
+        if (issue.tool_name) {
+          toolsWithRiskSet.add(issue.tool_name);
+        }
+        
+        if (issue.host) {
+          // 외부 host 판단 (localhost, 127.0.0.1, ::1 등이 아니면 외부)
+          const isInternal = issue.host === 'localhost' || 
+                            issue.host === '127.0.0.1' || 
+                            issue.host === '::1' ||
+                            issue.host.startsWith('192.168.') ||
+                            issue.host.startsWith('10.') ||
+                            issue.host.startsWith('172.');
+          
+          if (!isInternal) {
+            externalHostsSet.add(issue.host);
+          }
+          
+          // Endpoint 추적
+          const endpointKey = `${issue.host}|${issue.method || 'GET'}|${issue.path || ''}`;
+          endpointsSet.add(endpointKey);
+          
+          if (isInternal) {
+            internalEndpointsSet.add(endpointKey);
+          } else {
+            externalEndpointsSet.add(endpointKey);
+          }
+        }
+      });
+
+      return {
+        categoryCounts: Object.entries(categoryCount).map(([name, value]) => ({
+          name,
+          value
+        })),
+        externalHosts: Array.from(externalHostsSet),
+        totalEndpoints: endpointsSet.size,
+        externalEndpoints: externalEndpointsSet.size,
+        internalEndpoints: internalEndpointsSet.size,
+        toolsWithRisk: toolsWithRiskSet.size
+      };
+    })();
+
+    // 차트 색상 정의 (고정 색상 팔레트)
+    const COLORS = {
+      'MCP-01': '#1e3a8a', // 가장 위험 - 진한 파란색
+      'MCP-02': '#1e40af', // 위험 - 진한 파란색
+      'MCP-03': '#2563eb', // 중간 위험 - 중간 파란색
+      'MCP-04': '#3b82f6', // 덜 위험 - 밝은 파란색
+      'go': '#1e40af',
+      'npm': '#2563eb',
+      'ts': '#3b82f6',
+      'js': '#60a5fa',
+      'py': '#3b82f6'
+    };
+
+    // 고정 색상 팔레트 (어두운 파란색 계열, 위험도에 따라 진하게)
+    const FIXED_COLOR_PALETTE = [
+      '#1e3a8a', // 가장 진한 파란색 (가장 위험)
+      '#1e40af', // 진한 파란색 (위험)
+      '#2563eb', // 중간 파란색 (중간 위험)
+      '#3b82f6', // 밝은 파란색 (덜 위험)
+      '#60a5fa', // 더 밝은 파란색 (안전)
+      '#93c5fd', // 매우 밝은 파란색 (안전)
+      '#1e3a8a', // 반복
+      '#1e40af',
+      '#2563eb',
+      '#3b82f6',
+      '#60a5fa',
+      '#93c5fd'
+    ];
+
+    const getColor = (name, index = 0) => {
+      // COLORS에 정의된 색상이 있으면 사용
+      if (COLORS[name]) {
+        return COLORS[name];
+      }
+      // 없으면 고정 색상 팔레트에서 순환 사용
+      return FIXED_COLOR_PALETTE[index % FIXED_COLOR_PALETTE.length];
+    };
+
+    // OSS Issues에 대한 Reachable 개수 계산
+    const totalOssIssues = ossIssues.length;
+    const reachableOssIssues = ossIssues.filter(issue => 
+      issue.reachable === 1 || issue.reachable === true || issue.reachable === '1'
+    ).length;
+    const unreachableOssIssues = totalOssIssues - reachableOssIssues;
+
+    // 도넛 그래프용 보라색 계열 색상 팔레트 
+    const DONUT_COLOR_PALETTE = [
+      '#4c1d95', // 가장 진한 보라색 (가장 위험)
+      '#5b21b6', // 진한 보라색 (위험)
+      '#6d28d9', // 중간 보라색 (중간 위험)
+      '#7c3aed', // 밝은 보라색 (덜 위험)
+      '#8b5cf6', // 더 밝은 보라색 (안전)
+      '#a78bfa', // 매우 밝은 보라색 (안전)
+      '#4c1d95', // 반복
+      '#5b21b6',
+      '#6d28d9',
+      '#7c3aed',
+      '#8b5cf6', 
+      '#a78bfa'
+    ];
+
+    const getDonutColor = (name, index = 0) => {
+      // Unreachable은 특정 색상 사용
+      if (name === 'Unreachable') return '#a78bfa';
+      // COLORS에 정의된 색상이 있으면 파란색 계열로 변환
+      if (COLORS[name]) {
+        // MCP 카테고리에 따라 파란색 계열 매핑
+        if (name === 'MCP-01') return '#4c1d95';
+        if (name === 'MCP-02') return '#5b21b6';
+        if (name === 'MCP-03') return '#7c3aed';
+        if (name === 'MCP-04') return '#8b5cf6';
+      }
+      // 없으면 파란색 팔레트에서 순환 사용
+      return DONUT_COLOR_PALETTE[index % DONUT_COLOR_PALETTE.length];
+    };
+
+    // OSS Vulnerabilities 원 그래프 데이터 (전체 OSS Issues vs Reachable OSS Issues)
+    const ossCombinedChartData = [
+      { 
+        name: 'Reachable', 
+        value: reachableOssIssues
+      },
+      { 
+        name: 'Unreachable', 
+        value: unreachableOssIssues
+      }
+    ].filter(item => item.value > 0);
+
+    // 디버깅: OSS 데이터 확인
+    console.log('[Total Vulnerabilities] OSS Stats:', ossStats);
+    console.log('[Total Vulnerabilities] OSS Issues count:', ossIssues.length);
+    console.log('[Total Vulnerabilities] Packages Data count:', packagesData?.length || 0);
+    console.log('[Total Vulnerabilities] Reachable OSS Issues:', reachableOssIssues);
+    console.log('[Total Vulnerabilities] Unreachable OSS Issues:', unreachableOssIssues);
+    console.log('[Total Vulnerabilities] OSS Chart Data:', ossCombinedChartData);
+    console.log('[Total Vulnerabilities] ossStats.totalPackages:', ossStats.totalPackages);
+    console.log('[Total Vulnerabilities] ossStats.directDependencies:', ossStats.directDependencies);
+    console.log('[Total Vulnerabilities] ossStats.transitiveDependencies:', ossStats.transitiveDependencies);
+
+    // Tool 전체 개수 계산
+    // 1. report_data.total_tools 우선 사용
+    // 2. 없으면 report_data.tools 배열 길이 사용
+    // 3. 그것도 없으면 toolValidationIssues에서 고유한 tool_name 개수 사용
+    const totalTools = toolValidationReport?.report_data?.total_tools || 
+                      toolValidationReport?.report_data?.tools?.length || 
+                      (toolValidationIssues && toolValidationIssues.length > 0 
+                        ? new Set(toolValidationIssues.map(issue => issue.tool_name).filter(Boolean)).size 
+                        : 0);
+    
+    // 디버깅: Tool 개수 계산 확인
+    console.log('[Total Vulnerabilities] Tool Count Debug:', {
+      total_tools: toolValidationReport?.report_data?.total_tools,
+      tools_length: toolValidationReport?.report_data?.tools?.length,
+      unique_tool_names: toolValidationIssues && toolValidationIssues.length > 0 
+        ? new Set(toolValidationIssues.map(issue => issue.tool_name).filter(Boolean)).size 
+        : 0,
+      toolValidationIssues_count: toolValidationIssues?.length,
+      final_totalTools: totalTools
+    });
+
+    // Bar 차트를 위한 헬퍼 함수
+    const renderBarChart = (label, value, maxValue, color = '#2563eb', isLast = false) => {
+      const percentage = maxValue > 0 ? (value / maxValue) * 100 : 0;
     return (
-      <div className="sbom-scanner-content">
-        <div className="sbom-scanner-summary">
-          <div className="summary-card">
-            <h3>Total Components</h3>
-            <p className="summary-number">{sbomScannerData.length}</p>
+        <div style={{ marginBottom: isLast ? '0px' : '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>{label}</span>
+            <span style={{ fontSize: '0.875rem', fontWeight: '600', color: '#1f2233' }}>{value}</span>
           </div>
-          <div className="summary-card">
-            <h3>Vulnerable Components</h3>
-            <p className="summary-number">{sbomScannerData.filter(c => c.vulnerabilities > 0).length}</p>
+          <div style={{ width: '100%', height: '8px', background: '#e5e7eb', borderRadius: '4px', overflow: 'hidden' }}>
+            <div 
+              style={{ 
+                width: `${percentage}%`, 
+                height: '100%', 
+                background: color, 
+                borderRadius: '4px',
+                transition: 'width 0.3s ease'
+              }} 
+            />
           </div>
-          <div className="summary-card">
-            <h3>Last Scanned</h3>
-            <p className="summary-date">{sbomScannerData[0]?.lastScanned || '-'}</p>
+          </div>
+      );
+    };
+
+    // 스택 바 차트를 위한 헬퍼 함수 (여러 값을 하나의 바에 표시)
+    const renderStackedBarChart = (label, segments, maxValue, isLast = false) => {
+      const totalValue = segments.reduce((sum, seg) => sum + seg.value, 0);
+      // segments의 합을 기준으로 비율 계산 (totalValue 기준)
+      const displayMax = Math.max(maxValue, totalValue);
+      
+      return (
+        <div style={{ marginBottom: isLast ? '0px' : '16px', width: '100%', boxSizing: 'border-box', overflow: 'visible' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', width: '100%', boxSizing: 'border-box' }}>
+            <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>{label}</span>
+            <span style={{ fontSize: '0.875rem', fontWeight: '600', color: '#1f2233' }}>
+              {totalValue}
+            </span>
+        </div>
+          <div style={{ width: '100%', height: '8px', background: '#e5e7eb', borderRadius: '4px', overflow: 'hidden', display: 'flex', boxSizing: 'border-box', position: 'relative', margin: 0, padding: 0 }}>
+            {segments.map((segment, index) => {
+              // 각 segment의 비율을 displayMax 기준으로 계산
+              const percentage = displayMax > 0 ? (segment.value / displayMax) * 100 : 0;
+              // 0보다 작거나 100보다 큰 경우 방지
+              const safePercentage = Math.max(0, Math.min(100, percentage));
+              
+              // 이전 segment들의 누적 합 계산
+              const previousSum = segments.slice(0, index).reduce((sum, seg) => {
+                const prevPercentage = displayMax > 0 ? (seg.value / displayMax) * 100 : 0;
+                return sum + Math.max(0, Math.min(100, prevPercentage));
+              }, 0);
+              
+              // 마지막 segment인 경우 나머지 공간을 정확히 채우도록 조정
+              const isLastSegment = index === segments.length - 1;
+              let finalPercentage = safePercentage;
+              
+              if (isLastSegment) {
+                // 마지막 segment는 나머지 공간을 정확히 채우도록 (반올림 오차 방지)
+                const remaining = 100 - previousSum;
+                finalPercentage = Math.max(0, Math.min(100, remaining));
+              }
+              
+              return (
+                <div
+                  key={index}
+                  style={{
+                    width: `${finalPercentage}%`,
+                    height: '100%',
+                    background: segment.color,
+                    transition: 'width 0.3s ease',
+                    flexShrink: 0,
+                    flexGrow: 0,
+                    boxSizing: 'border-box',
+                    margin: 0,
+                    padding: 0,
+                    border: 'none',
+                    outline: 'none'
+                  }}
+                  title={`${segment.label}: ${segment.value}`}
+                />
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: '12px', marginTop: '4px', fontSize: '0.75rem', color: '#6b7280' }}>
+            {segments.map((segment, index) => (
+              <span key={index} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ width: '8px', height: '8px', background: segment.color, borderRadius: '2px' }} />
+                <span>{segment.label}: {segment.value}</span>
+              </span>
+            ))}
           </div>
         </div>
-        <div className="sbom-scanner-table">
-          <table>
-            <thead>
-              <tr>
-                <th>Component</th>
-                <th>Type</th>
-                <th>Vulnerabilities</th>
-                <th>Licenses</th>
-                <th>Last Scanned</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sbomScannerData.length === 0 ? (
-                <tr>
-                  <td colSpan="5" style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
-                    데이터가 없습니다.
-                  </td>
-                </tr>
+      );
+    };
+
+    // 총 취약점 개수 계산 (OSS + Code + Tool Validation)
+    const totalVulnerabilities = (ossIssues?.length || 0) + (codeIssues?.length || 0) + (toolValidationIssues?.length || 0);
+    
+    // 위험도 배지 결정 (취약점이 없으면 배지 표시 안 함)
+    let riskLevel = null;
+    let riskColor = '#ffffff'; // 텍스트 색상 (흰색)
+    let riskBgColor = '#fbbf24'; // 배경 색상 (노란색)
+    
+    if (totalVulnerabilities === 0) {
+      // 취약점이 없으면 배지 표시 안 함
+      riskLevel = null;
+    } else if (totalVulnerabilities >= 100) {
+      riskLevel = 'HIGH';
+      riskColor = '#ffffff'; // 텍스트 색상 (흰색)
+      riskBgColor = '#dc2626'; // 배경 색상 (빨간색)
+    } else if (totalVulnerabilities >= 50) {
+      riskLevel = 'MEDIUM';
+      riskColor = '#ffffff'; // 텍스트 색상 (흰색)
+      riskBgColor = '#f97316'; // 배경 색상 (주황색)
+    } else {
+      riskLevel = 'LOW';
+      riskColor = '#ffffff'; // 텍스트 색상 (흰색)
+      riskBgColor = '#fbbf24'; // 배경 색상 (노란색)
+    }
+
+    return (
+      <div className="total-vulnerabilities-content">
+        {/* 첫 줄: 프로젝트 타입, 위험도 (Risk 발견된 Tool) */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '32px' }}>
+          <div className="stat-card" style={{ padding: '20px', background: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+            <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '8px' }}>프로젝트 타입</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: '600', color: '#1f2233' }}>
+              {ossStats.projectType || '-'}
+            </div>
+          </div>
+          <div className="stat-card" style={{ padding: '20px', background: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+            <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '8px' }}>위험도</div>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              {riskLevel ? (
+                <span style={{
+                  display: 'inline-block',
+                  padding: '6px 16px',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  fontWeight: '700',
+                  color: riskColor,
+                  backgroundColor: riskBgColor,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>
+                  {riskLevel}
+                </span>
               ) : (
-                sbomScannerData.map(item => (
-                  <tr key={item.id}>
-                    <td className="package-name">{item.component}</td>
-                    <td>
-                      <span className="type-badge">{item.type}</span>
-                    </td>
-                    <td>
-                      {item.vulnerabilities > 0 ? (
-                        <span className="vuln-count">{item.vulnerabilities}</span>
-                      ) : (
-                        <span className="no-vuln">0</span>
-                      )}
-                    </td>
-                    <td>{item.licenses.join(', ')}</td>
-                    <td>{item.lastScanned}</td>
-                  </tr>
-                ))
+                <span style={{ fontSize: '1.5rem', fontWeight: '600', color: '#1f2233' }}>-</span>
               )}
-            </tbody>
-          </table>
+            </div>
+          </div>
+        </div>
+
+        {/* 두 번째 줄: 통계 Bar + 원 그래프 (합침) */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px', marginBottom: '40px', alignItems: 'stretch' }}>
+          {/* OSS 통계 + 원 그래프 */}
+          <div style={{ padding: '20px', background: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'visible', boxSizing: 'border-box' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '20px', color: '#1f2233' }}>
+              OSS Vulnerabilities
+            </h3>
+            {(ossStats.totalPackages > 0 || packagesData?.length > 0 || ossIssues?.length > 0) ? (
+              <>
+                <div style={{ marginBottom: '12px', height: '160px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start' }}>
+                  {ossStats.totalPackages > 0 && renderStackedBarChart('전체 패키지 수', [
+                    { label: '직접 의존성', value: ossStats.directDependencies || 0, color: '#1e3a8a' },
+                    { label: '전이 의존성', value: ossStats.transitiveDependencies || 0, color: '#60a5fa' }
+                  ], ossStats.totalPackages, false)}
+                  {ossStats.maxDepth > 0 && (
+                    <div style={{ marginTop: '1px' }}>
+                      {renderBarChart(`SBOM Depth (${ossStats.maxDepth})`, ossStats.maxDepth, Math.max(ossStats.maxDepth, 10), '#1e3a8a', true)}
+                    </div>
+                  )}
+                </div>
+                {ossCombinedChartData.length > 0 && (
+                  <div style={{ marginTop: '4px', borderTop: '1px solid #e5e7eb', paddingTop: '4px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ flex: '1', position: 'relative', height: '250px', maxWidth: '60%' }}>
+                      <ResponsiveContainer width="100%" height={250}>
+                        <PieChart>
+                          <Pie
+                            data={ossCombinedChartData}
+                            cx="50%"
+                            cy="50%"
+                            labelLine={false}
+                            label={false}
+                            outerRadius={80}
+                            innerRadius={50}
+                            fill="#8884d8"
+                            dataKey="value"
+                          >
+                            {ossCombinedChartData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={getDonutColor(entry.name, index)} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div style={{ 
+                        position: 'absolute', 
+                        top: '50%', 
+                        left: '50%', 
+                        transform: 'translate(-50%, -50%)',
+                        textAlign: 'center',
+                        pointerEvents: 'none'
+                      }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: '600', color: '#1f2233' }}>
+                          {ossCombinedChartData.reduce((sum, entry) => sum + entry.value, 0)}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '4px' }}>
+                          Total
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-start', minWidth: '150px' }}>
+                      {ossCombinedChartData.map((entry, index) => (
+                        <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem' }}>
+                          <div style={{ width: '12px', height: '12px', backgroundColor: getDonutColor(entry.name, index), borderRadius: '2px', flexShrink: 0 }} />
+                          <span style={{ color: '#1f2233', whiteSpace: 'nowrap' }}>{entry.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>발견된 Risk 및 Vulnerability 없음</div>
+            )}
+          </div>
+
+          {/* Code 통계 + 원 그래프 */}
+          <div style={{ padding: '20px', background: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '20px', color: '#1f2233' }}>
+              Code Vulnerabilities
+            </h3>
+            {codeStats.scannedFiles > 0 || codeStats.generalFindings > 0 || codeStats.mcpFindings > 0 ? (
+              <>
+                <div style={{ marginBottom: '12px', height: '160px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start' }}>
+                  {renderBarChart('일반 취약점', codeStats.generalFindings, Math.max(codeStats.generalFindings, codeStats.mcpFindings, 1), '#1e3a8a', false)}
+                  <div style={{ marginTop: '20px' }}>
+                    {renderBarChart('MCP 특화 취약점', codeStats.mcpFindings, Math.max(codeStats.generalFindings, codeStats.mcpFindings, 1), '#1e3a8a', true)}
+                  </div>
+                </div>
+                {codeStats.vulnerabilityTypes.length > 0 && (
+                  <div style={{ marginTop: '4px', borderTop: '1px solid #e5e7eb', paddingTop: '4px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ flex: '1', position: 'relative', height: '250px', maxWidth: '60%' }}>
+                      <ResponsiveContainer width="100%" height={250}>
+                        <PieChart>
+                          <Pie
+                            data={codeStats.vulnerabilityTypes}
+                            cx="50%"
+                            cy="50%"
+                            labelLine={false}
+                            label={false}
+                            outerRadius={80}
+                            innerRadius={50}
+                            fill="#8884d8"
+                            dataKey="value"
+                          >
+                            {codeStats.vulnerabilityTypes.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={getDonutColor(entry.name, index)} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div style={{ 
+                        position: 'absolute', 
+                        top: '50%', 
+                        left: '50%', 
+                        transform: 'translate(-50%, -50%)',
+                        textAlign: 'center',
+                        pointerEvents: 'none'
+                      }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: '600', color: '#1f2233' }}>
+                          {codeStats.vulnerabilityTypes.reduce((sum, entry) => sum + entry.value, 0)}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '4px' }}>
+                          Total
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-start', minWidth: '150px' }}>
+                      {codeStats.vulnerabilityTypes.map((entry, index) => (
+                        <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem' }}>
+                          <div style={{ width: '12px', height: '12px', backgroundColor: getDonutColor(entry.name, index), borderRadius: '2px', flexShrink: 0 }} />
+                          <span style={{ color: '#1f2233', whiteSpace: 'nowrap' }}>{entry.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>발견된 Risk 및 Vulnerability 없음</div>
+            )}
+          </div>
+
+          {/* Tool 통계 + 원 그래프 */}
+          <div style={{ padding: '20px', background: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '20px', color: '#1f2233' }}>
+              Tool Validation
+            </h3>
+            {toolValidationStats.totalEndpoints > 0 ? (
+              <>
+                <div style={{ marginBottom: '12px', height: '160px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start' }}>
+                  {renderStackedBarChart('API Endpoint', [
+                    { label: '외부', value: toolValidationStats.externalEndpoints, color: '#1e3a8a' },
+                    { label: '내부', value: toolValidationStats.internalEndpoints, color: '#60a5fa' }
+                  ], toolValidationStats.totalEndpoints, false)}
+                  {renderStackedBarChart('Tool Risk', [
+                    { label: 'Risk 발견', value: toolValidationStats.toolsWithRisk, color: '#1e3a8a' },
+                    { label: 'Risk 없음', value: Math.max(0, totalTools - toolValidationStats.toolsWithRisk), color: '#60a5fa' }
+                  ], totalTools, true)}
+                </div>
+                {toolValidationStats.categoryCounts.length > 0 && (
+                  <div style={{ marginTop: '4px', borderTop: '1px solid #e5e7eb', paddingTop: '4px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ flex: '1', position: 'relative', height: '250px', maxWidth: '60%' }}>
+                      <ResponsiveContainer width="100%" height={250}>
+                        <PieChart>
+                          <Pie
+                            data={toolValidationStats.categoryCounts}
+                            cx="50%"
+                            cy="50%"
+                            labelLine={false}
+                            label={false}
+                            outerRadius={80}
+                            innerRadius={50}
+                            fill="#8884d8"
+                            dataKey="value"
+                          >
+                            {toolValidationStats.categoryCounts.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={getDonutColor(entry.name, index)} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div style={{ 
+                        position: 'absolute', 
+                        top: '50%', 
+                        left: '50%', 
+                        transform: 'translate(-50%, -50%)',
+                        textAlign: 'center',
+                        pointerEvents: 'none'
+                      }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: '600', color: '#1f2233' }}>
+                          {toolValidationStats.categoryCounts.reduce((sum, entry) => sum + entry.value, 0)}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '4px' }}>
+                          Total
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-start', minWidth: '150px' }}>
+                      {toolValidationStats.categoryCounts.map((entry, index) => (
+                        <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem' }}>
+                          <div style={{ width: '12px', height: '12px', backgroundColor: getDonutColor(entry.name, index), borderRadius: '2px', flexShrink: 0 }} />
+                          <span style={{ color: '#1f2233', whiteSpace: 'nowrap' }}>{entry.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>발견된 Risk 및 Vulnerability 없음</div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -1054,12 +2338,12 @@ const RiskAssessment = () => {
             <table>
               <thead>
                 <tr>
-                  <th>Tool</th>
-                  <th className="tool-validation-host">Host</th>
-                  <th className="tool-validation-method">Method</th>
-                  <th className="tool-validation-path">Path</th>
-                  <th>Vulnerability</th>
-                  <th>상세보기</th>
+                  <th>도구</th>
+                  <th className="tool-validation-host">호스트</th>
+                  <th className="tool-validation-method">메서드</th>
+                  <th className="tool-validation-path">경로</th>
+                  <th>취약점</th>
+                  <th>View Detail</th>
                 </tr>
               </thead>
               <tbody>
@@ -1125,7 +2409,7 @@ const RiskAssessment = () => {
                             >
                               {isFirstInTool ? toolName : ''}
                             </td>
-                            <td>{firstIssue.host || '-'}</td>
+                            <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{firstIssue.host || '-'}</td>
                             <td>
                               <span style={{
                                 padding: '4px 8px',
@@ -1205,40 +2489,40 @@ const RiskAssessment = () => {
             <tr>
               {selectedTab === 'Code Vulnerabilities' || selectedTab === 'Total Vulnerabilities' ? (
                 <>
-                  <th>Vulnerability</th>
+                  <th>취약점</th>
                   <th className="sortable" onClick={(e) => { e.stopPropagation(); handleVulnerabilitySort('severity'); }} style={{ cursor: 'pointer', userSelect: 'none', position: 'relative', paddingRight: '24px' }}>
-                    Severity
+                    위험도
                     {getVulnerabilitySortIcon('severity')}
                   </th>
                   {selectedTab === 'Code Vulnerabilities' ? (
                     <>
                       <th>CWE</th>
-                      <th>Language</th>
-                      <th>Vulnerable package</th>
-                      <th>상세보기</th>
+                      <th>언어</th>
+                      <th>취약한 코드</th>
+                      <th>View Detail</th>
                     </>
                   ) : (
                     <>
-                      <th>Type</th>
-                      <th>Vulnerable package</th>
-                      <th>상세보기</th>
+                      <th>유형</th>
+                      <th>취약 패키지</th>
+                      <th>View Detail</th>
                     </>
                   )}
                 </>
               ) : (
                 <>
-                  <th>Vulnerability ID</th>
+                  <th>취약점 ID</th>
                   <th className="sortable" onClick={(e) => { e.stopPropagation(); handleVulnerabilitySort('cvss'); }} style={{ cursor: 'pointer', userSelect: 'none', position: 'relative', paddingRight: '24px' }}>
                     CVSS
                     {getVulnerabilitySortIcon('cvss')}
                   </th>
-                  <th>Reachability</th>
-                  <th>Package</th>
-                  <th>Version</th>
-                  <th>Fix Version</th>
-                  <th>Dependency</th>
-                  <th>License</th>
-                  <th>상세보기</th>
+                  <th>도달 가능성</th>
+                  <th>패키지</th>
+                  <th>버전</th>
+                  <th>수정 버전</th>
+                  <th>의존성</th>
+                  <th>라이선스</th>
+                  <th>View Detail</th>
                 </>
               )}
             </tr>
@@ -1254,9 +2538,10 @@ const RiskAssessment = () => {
               issues.map(issue => {
                 const getSeverityColor = (severity) => {
                   const severityLower = (severity || 'unknown').toLowerCase();
-                  if (severityLower === 'high') return '#dc3545';
+                  if (severityLower === 'critical') return '#dc3545';
+                  if (severityLower === 'high') return '#fd7e14';
                   if (severityLower === 'medium') return '#ffc107';
-                  if (severityLower === 'low') return '#17a2b8';
+                  if (severityLower === 'low') return '#28a745';
                   if (severityLower === 'info') return '#6c757d';
                   return '#6c757d';
                 };
@@ -1636,9 +2921,8 @@ const RiskAssessment = () => {
 
   // 리스트 뷰 렌더링
   const renderListView = () => {
-    // 거부된 서버는 제외하고, 검색어로 필터링
+    // 서버 필터링은 백엔드에서 처리되므로, 검색어만 클라이언트에서 필터링
     let filteredServers = mcpServers.filter(server => 
-      server.status !== 'rejected' && 
       server.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
@@ -1688,12 +2972,12 @@ const RiskAssessment = () => {
 
     return (
       <div className="risk-assessment-container">
-        <div className="risk-assessment-left" style={{ padding: '24px', minHeight: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+        <div className="risk-assessment-left" style={{ padding: '25px', minHeight: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
           <div className="risk-assessment-header" style={{ flexShrink: 0, padding: '0 0 8px 0', marginBottom: '8px', borderBottom: '1px solid var(--divider)' }}>
             <h1 style={{ margin: '0 0 8px 0' }}>Risk Assessment</h1>
           </div>
 
-          <section className="list-page__controls-row" style={{ flexShrink: 0, marginTop: '0px' }}>
+          <section className="list-page__controls-row" style={{ flexShrink: 0, marginTop: '8px' }}>
             <div className="list-page__header">
               <div>
                 <h2>MCP Server List</h2>
@@ -1704,21 +2988,21 @@ const RiskAssessment = () => {
                   onClick={() => setServerFilter('all')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
-                  전체 서버 ({serverCounts.all})
+                  전체 서버
                 </button>
                 <button
                   className={`request-board-tab ${serverFilter === 'pending' ? 'active' : ''}`}
                   onClick={() => setServerFilter('pending')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
-                  대기중인 서버 ({serverCounts.pending})
+                  대기중인 서버
                 </button>
                 <button
                   className={`request-board-tab ${serverFilter === 'approved' ? 'active' : ''}`}
                   onClick={() => setServerFilter('approved')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
-                  승인된 서버 ({serverCounts.approved})
+                  승인된 서버
                 </button>
               </div>
             </div>
@@ -1731,7 +3015,7 @@ const RiskAssessment = () => {
                 <input
                   type="text"
                   className="search-input"
-                  placeholder="Search Servers"
+                  placeholder="Search servers"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -1749,7 +3033,7 @@ const RiskAssessment = () => {
                     분석 시간
                     {getSortIcon('analysis_timestamp')}
                   </th>
-                  <th>Run Analysis</th>
+                  <th>위험도 산정</th>
                   <th>작업</th>
                 </tr>
               </thead>
@@ -1766,11 +3050,12 @@ const RiskAssessment = () => {
                     const progressData = analysisProgressServers[server.id];
                     const progress = typeof progressData === 'object' 
                       ? (progressData.bomtori !== null && progressData.bomtori !== undefined 
-                          ? Math.round((progressData.bomtori + progressData.scanner) / 2)
+                          ? Math.round((progressData.bomtori + progressData.scanner + (progressData.toolVet || 0)) / 3)
                           : progressData.scanner || 0)
                       : (progressData || 0);
                     const bomtoriProgress = typeof progressData === 'object' ? (progressData.bomtori !== null ? progressData.bomtori : 0) : 0;
                     const scannerProgress = typeof progressData === 'object' ? (progressData.scanner || 0) : (progressData || 0);
+                    const toolVetProgress = typeof progressData === 'object' ? (progressData.toolVet !== null && progressData.toolVet !== undefined ? progressData.toolVet : 0) : 0;
                     const hasBomtori = server.github_link && server.github_link.includes('github.com');
                     
                     return (
@@ -1873,11 +3158,42 @@ const RiskAssessment = () => {
                                   }}></div>
                                 </div>
                               </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#666' }}>
+                                  <span>Tool 검사</span>
+                                  <span>{toolVetProgress}%</span>
+                                </div>
+                                <div style={{
+                                  width: '100%',
+                                  height: '4px',
+                                  backgroundColor: '#e0e0e0',
+                                  borderRadius: '2px',
+                                  overflow: 'hidden'
+                                }}>
+                                  <div style={{
+                                    width: `${toolVetProgress}%`,
+                                    height: '100%',
+                                    backgroundColor: '#7c3aed',
+                                    transition: 'width 0.3s ease'
+                                  }}></div>
+                                </div>
+                              </div>
                             </div>
                           ) : (
                             <button
                               className="btn-refresh"
                               onClick={() => handleServerAnalysis(server)}
+                              style={{ 
+                                padding: '6px 12px', 
+                                fontSize: '0.85rem',
+                                width: '100%',
+                                backgroundColor: '#003153',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: '6px',
+                                fontWeight: '500',
+                                cursor: 'pointer'
+                              }}
                             >
                               Run Analysis
                             </button>
@@ -1885,7 +3201,6 @@ const RiskAssessment = () => {
                         </td>
                         <td className="system-row__link">
                           <button 
-                            className="btn-view-detail"
                             onClick={async () => {
                               const scanPath = server.github_link || server.file_path;
                               if (!scanPath) {
@@ -2017,8 +3332,20 @@ const RiskAssessment = () => {
                                 alert('스캔 결과를 불러오는 중 오류가 발생했습니다.');
                               }
                             }}
-                          >
-                            상세보기
+                              style={{
+                                padding: '6px 12px',
+                                fontSize: '0.85rem',
+                                backgroundColor: '#003153',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: '8px',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                whiteSpace: 'nowrap',
+                                width: '100%'
+                              }}
+                            >
+                              상세보기
                           </button>
                         </td>
                       </tr>
@@ -3397,133 +4724,104 @@ const RiskAssessment = () => {
                   </section>
                 </>
               ) : (
-                // Code Vulnerabilities 상세보기 (OSS 스타일)
+                // Code Vulnerabilities 상세보기
                 <>
-                  <section className="oss-detail-drawer__section">
-                    <h3>Vulnerability Information</h3>
-                    <div className="oss-detail-drawer__info-grid">
-                      <div className="oss-detail-drawer__info-item">
-                        <span className="oss-detail-drawer__info-label">Severity</span>
-                        <span className="oss-detail-drawer__info-value">
-                          <span className={`severity-pill severity-pill--${(selectedIssue.severity || 'unknown').toLowerCase()}`}>
+                  <div className="vulnerability-info">
+                    <div className="info-section" style={{ flexWrap: 'wrap', gap: '16px' }}>
+                      <div className="severity-box" style={{ 
+                        backgroundColor: (() => {
+                          const severity = (selectedIssue.severity || 'unknown').toLowerCase();
+                          if (severity === 'critical' || severity === 'high') return '#dc3545';
+                          if (severity === 'medium') return '#ffc107';
+                          if (severity === 'low') return '#28a745';
+                          if (severity === 'info') return '#6c757d';
+                          return '#6c757d';
+                        })()
+                      }}>
                             {(selectedIssue.severity || 'unknown').toUpperCase()}
-                          </span>
-                        </span>
                       </div>
-                      {selectedIssue.rule_id && (
-                        <div className="oss-detail-drawer__info-item">
-                          <span className="oss-detail-drawer__info-label">Rule ID</span>
-                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace' }}>
-                            {selectedIssue.rule_id}
-                          </span>
+                      <div className="info-item" style={{ flex: '1', minWidth: '200px' }}>
+                        <strong>Rule ID</strong>
+                        <code>{selectedIssue.rule_id || 'N/A'}</code>
                         </div>
-                      )}
                       {selectedIssue.file && (
-                        <div className="oss-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
-                          <span className="oss-detail-drawer__info-label">File</span>
-                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                            {selectedIssue.file}
-                          </span>
+                        <div className="info-item" style={{ flex: '1 1 100%', minWidth: '200px' }}>
+                          <strong>File</strong>
+                          <code style={{ display: 'block', marginTop: '4px' }}>{selectedIssue.file}</code>
                         </div>
                       )}
                       {selectedIssue.line && (
-                        <div className="oss-detail-drawer__info-item">
-                          <span className="oss-detail-drawer__info-label">Line</span>
-                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace' }}>
-                            {selectedIssue.line}{selectedIssue.column && ` (Column: ${selectedIssue.column})`}
-                          </span>
+                        <div className="info-item" style={{ flex: '1', minWidth: '150px' }}>
+                          <strong>Line</strong>
+                          <code>{selectedIssue.line}{selectedIssue.column && ` (Column: ${selectedIssue.column})`}</code>
                         </div>
                       )}
-                      {selectedIssue.language && (
-                        <div className="oss-detail-drawer__info-item">
-                          <span className="oss-detail-drawer__info-label">Language</span>
-                          <span className="oss-detail-drawer__info-value">
-                            {selectedIssue.language}
-                          </span>
                         </div>
-                      )}
-                      {selectedIssue.pattern_type && (
-                        <div className="oss-detail-drawer__info-item">
-                          <span className="oss-detail-drawer__info-label">Pattern Type</span>
-                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace' }}>
-                            {selectedIssue.pattern_type}
-                          </span>
+
+                    <div className="description-box">
+                      <strong>Description</strong>
+                      <p>{selectedIssue.description || selectedIssue.message || 'No description available'}</p>
                         </div>
-                      )}
-                      {selectedIssue.pattern && (
-                        <div className="oss-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
-                          <span className="oss-detail-drawer__info-label">Pattern</span>
-                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                            {selectedIssue.pattern}
-                          </span>
-                        </div>
-                      )}
+
                       {selectedIssue.cwe && (
-                        <div className="oss-detail-drawer__info-item">
-                          <span className="oss-detail-drawer__info-label">CWE</span>
-                          <span className="oss-detail-drawer__info-value" style={{ fontFamily: 'monospace' }}>
-                            {selectedIssue.cwe}
-                          </span>
+                      <div className="description-box">
+                        <strong>CWE</strong>
+                        <p>{selectedIssue.cwe}</p>
                         </div>
                       )}
-                    </div>
-                    
-                    {(selectedIssue.description || selectedIssue.message) && (
-                      <div className="oss-detail-drawer__description-info">
-                        <div className="oss-detail-drawer__info-item oss-detail-drawer__info-item--description">
-                          <span className="oss-detail-drawer__info-label">Description</span>
-                          <div className="oss-detail-drawer__info-value">
-                            {selectedIssue.description || selectedIssue.message || 'No description available'}
-                          </div>
-                        </div>
-                      </div>
-                    )}
 
                     {selectedIssue.code_snippet && (
-                      <div className="oss-detail-drawer__info-item" style={{ gridColumn: '1 / -1', marginTop: '8px' }}>
-                        <span className="oss-detail-drawer__info-label">Code Snippet</span>
-                        <pre style={{
-                          background: '#f5f5f5',
-                          padding: '16px',
-                          borderRadius: '8px',
-                          overflow: 'auto',
-                          fontSize: '0.85rem',
-                          marginTop: '8px',
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word',
-                          maxHeight: '400px',
-                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                          lineHeight: '1.5',
-                          border: '1px solid #e0e0e0',
-                          color: '#333'
-                        }}>
+                      <div className="description-box" style={{ marginTop: '16px' }}>
+                        <strong>Code Snippet</strong>
+                        <pre className="code-snippet">
                           {selectedIssue.code_snippet}
                         </pre>
+                    </div>
+                    )}
+
+                    <div className="info-section" style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      {selectedIssue.pattern_type && (
+                        <div className="info-item">
+                          <strong>Pattern Type</strong>
+                          <code>{selectedIssue.pattern_type}</code>
+                          </div>
+                      )}
+                      {selectedIssue.pattern && (
+                        <div className="info-item">
+                          <strong>Pattern</strong>
+                          <code>{selectedIssue.pattern}</code>
                       </div>
                     )}
-                  </section>
+                      {selectedIssue.language && (
+                        <div className="info-item">
+                          <strong>Language</strong>
+                          <code>{selectedIssue.language}</code>
+                      </div>
+                    )}
+                    </div>
 
                   {selectedIssue.rawFinding && (
-                    <section className="oss-detail-drawer__section">
-                      <h3>Raw Finding Data</h3>
+                      <div className="description-box" style={{ marginTop: '24px' }}>
+                        <strong>Raw Finding Data</strong>
                       <pre style={{
                         background: '#f5f5f5',
                         padding: '16px',
-                        borderRadius: '8px',
+                          borderRadius: '6px',
                         overflow: 'auto',
                         fontSize: '0.8rem',
+                          marginTop: '12px',
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-word',
                         maxHeight: '400px',
                         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                         lineHeight: '1.5',
-                        border: '1px solid #e0e0e0',
-                        color: '#333'
+                          border: '1px solid #e0e0e0'
                       }}>
                         {JSON.stringify(selectedIssue.rawFinding, null, 2)}
                       </pre>
-                    </section>
+                      </div>
                   )}
+                  </div>
                 </>
               )}
               </div>

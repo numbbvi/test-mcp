@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -278,7 +279,8 @@ def main():
             print(f"[ERROR] 파일 쓰기 테스트 실패, 분석을 중단합니다")
             sys.exit(1)
     
-    proxy_url = "http://127.0.0.1:8081"
+    # proxy_url은 나중에 동적으로 할당된 포트로 업데이트됨
+    proxy_url = "http://127.0.0.1:8081"  # 초기값, 나중에 업데이트됨
     print(f"[DEBUG] --env-file 인자: {args.env_file}")
     env_overrides = load_env_file(args.env_file)
     print(f"[DEBUG] env_overrides: {list(env_overrides.keys())}")
@@ -311,8 +313,23 @@ def main():
 
         mitm_conf_dir.mkdir(parents=True, exist_ok=True)
 
-        print("mitmdump 실행 중...")
-        proxy_proc = start_mitmdump("mitmdump", "127.0.0.1", 8081, temp_proxy_log, mitm_conf_dir)
+        # 사용 가능한 포트 찾기 (8081부터 시작하여 10개 포트 시도)
+        proxy_port = None
+        for port in range(8081, 8091):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex(('127.0.0.1', port))
+            sock.close()
+            if result != 0:  # 포트가 사용 가능함
+                proxy_port = port
+                break
+        
+        if proxy_port is None:
+            print("사용 가능한 포트를 찾을 수 없습니다 (8081-8090)", file=sys.stderr)
+            sys.exit(1)
+        
+        print(f"mitmdump 실행 중... (포트: {proxy_port})")
+        proxy_proc = start_mitmdump("mitmdump", "127.0.0.1", proxy_port, temp_proxy_log, mitm_conf_dir)
         time.sleep(1)
         if proxy_proc.poll() is not None:
             stdout, stderr = proxy_proc.communicate()
@@ -322,6 +339,9 @@ def main():
             if stderr:
                 print(stderr, file=sys.stderr)
             sys.exit(1)
+        
+        # proxy_url 업데이트
+        proxy_url = f"http://127.0.0.1:{proxy_port}"
 
         ca_paths = wait_for_mitmproxy_ca(mitm_conf_dir)
         if ca_paths:

@@ -347,15 +347,14 @@ const RequestBoard = () => {
       return;
     }
     
-    // scanned가 1이거나 저장된 결과가 있으면 분석 결과를 불러옴 (상태 초기화하지 않음)
-    // 중요: scanned === 1일 때는 riskAnalysisResult를 null로 초기화하지 않음
-    // scanned는 숫자 1 또는 문자열 "1"일 수 있음
-    const isScanned = latestRequest.scanned === 1 || latestRequest.scanned === '1' || latestRequest.scanned === true;
+    // analysis_timestamp가 있으면 분석 결과를 불러옴 (상태 초기화하지 않음)
+    // analysis_timestamp가 있으면 분석이 완료된 것으로 간주
+    const hasAnalysisTimestamp = latestRequest.analysis_timestamp && latestRequest.analysis_timestamp.trim() !== '';
     const hasExistingResult = riskAnalysisResult && (riskAnalysisResult.scanId || riskAnalysisResult.ossVulnerabilities !== undefined);
-    console.log('handleViewDetail - scanned 값:', latestRequest.scanned, 'isScanned:', isScanned, 'hasExistingResult:', hasExistingResult);
+    console.log('handleViewDetail - analysis_timestamp:', latestRequest.analysis_timestamp, 'hasAnalysisTimestamp:', hasAnalysisTimestamp, 'hasExistingResult:', hasExistingResult);
     
-    // scanned가 1이거나 기존 결과가 있으면 결과를 불러옴
-    if (isScanned || hasExistingResult) {
+    // analysis_timestamp가 있거나 기존 결과가 있으면 결과를 불러옴
+    if (hasAnalysisTimestamp || hasExistingResult) {
       // 분석이 완료된 상태이므로 진행 중 상태는 false로 설정
       setAnalyzingRisk(false);
       setAnalysisProgress({ bomtori: 100, scanner: 100, toolVet: 100 });
@@ -599,6 +598,9 @@ const RequestBoard = () => {
                   
                   // 3초 후에 결과 표시
                   setTimeout(async () => {
+                  // 현재 selectedRequest의 ID를 저장 (클로저 문제 방지)
+                  const currentRequestId = selectedRequest?.id;
+                  
                   // 완료 후 취약점 개수 조회
                   try {
                     const vulnRes = await fetch(`http://localhost:3001/api/risk-assessment/code-vulnerabilities?scan_id=${scanId}`, {
@@ -644,31 +646,64 @@ const RequestBoard = () => {
                         toolVulnerabilities: toolVulns,
                         scanId: scanId
                       };
+                      
+                      // 결과 저장 및 상태 업데이트
                       setRiskAnalysisResult(result);
+                      setCurrentScanId(scanId);
+                      setAnalysisCompleted(true);
+                      setAnalyzingRisk(false);
+                      
                       // request id별로 결과 저장 (패널을 닫고 다시 열어도 유지)
-                      if (selectedRequest) {
+                      if (currentRequestId) {
                         setRiskAnalysisResults(prev => ({
                           ...prev,
-                          [selectedRequest.id]: result
+                          [currentRequestId]: result
                         }));
                       }
-                      setCurrentScanId(scanId); // scanId를 별도 state에 저장
-                    
-                    setAnalysisCompleted(true);
-                    setAnalyzingRisk(false);
-                    
-                      // 현재 선택된 요청을 먼저 업데이트 (scanned: 1로 설정)
-                    if (selectedRequest) {
-                      const updatedRequest = { ...selectedRequest, scanned: 1 };
-                      setSelectedRequest(updatedRequest);
-                    }
                       
-                      // 스캔 완료 후 요청 목록을 다시 불러와서 scanned 필드 업데이트
-                      // fetchRequests 내부에서 selectedRequest도 자동으로 업데이트됨
-                      await fetchRequests();
+                      // 스캔 완료 직후 selectedRequest를 즉시 scanned=1로 업데이트 (버튼이 사라지도록)
+                      // 함수형 업데이트를 사용하여 클로저 문제 방지
+                      setSelectedRequest(prev => {
+                        if (prev && prev.id === currentRequestId) {
+                          const updatedRequest = { ...prev, scanned: 1 };
+                          console.log('✅ 분석 완료 - selectedRequest 즉시 업데이트 (scanned=1):', {
+                            id: updatedRequest.id,
+                            scanned: updatedRequest.scanned,
+                            name: updatedRequest.name,
+                            prevScanned: prev.scanned
+                          });
+                          return updatedRequest;
+                        }
+                        return prev;
+                      });
+                      
+                      // 스캔 완료 후 요청 목록을 다시 불러와서 DB의 scanned 필드 확인
+                      // 백엔드에서 scanned=1로 업데이트된 후에 가져옴
+                      const updatedRequests = await fetchRequests();
+                      
+                      // 업데이트된 requests에서 현재 선택된 요청 찾기 (ID로 찾기)
+                      if (currentRequestId) {
+                        const latestRequest = updatedRequests.find(r => r.id === currentRequestId);
+                        if (latestRequest) {
+                          // 함수형 업데이트로 scanned=1로 확실하게 설정
+                          setSelectedRequest(prev => {
+                            if (prev && prev.id === currentRequestId) {
+                              const finalRequest = { ...latestRequest, scanned: 1 };
+                              console.log('✅ 분석 완료 - selectedRequest 최종 업데이트 (DB 반영):', {
+                                id: finalRequest.id,
+                                scanned: finalRequest.scanned,
+                                db_scanned: latestRequest.scanned,
+                                name: finalRequest.name
+                              });
+                              return finalRequest;
+                            }
+                            return prev;
+                          });
+                        }
+                      }
                   } catch (error) {
                     console.error('취약점 개수 조회 실패:', error);
-                      // 조회 실패 시에도 기본값으로 결과 설정
+                    // 조회 실패 시에도 기본값으로 결과 설정
                     const errorResult = {
                       ossVulnerabilities: 0,
                       codeVulnerabilities: 0,
@@ -676,10 +711,10 @@ const RequestBoard = () => {
                       scanId: scanId
                     };
                     setRiskAnalysisResult(errorResult);
-                    if (selectedRequest) {
+                    if (currentRequestId) {
                       setRiskAnalysisResults(prev => ({
                         ...prev,
-                        [selectedRequest.id]: errorResult
+                        [currentRequestId]: errorResult
                       }));
                     }
                     setAnalysisCompleted(true);
@@ -978,6 +1013,30 @@ const RequestBoard = () => {
     });
   }
 
+  const getStatusBadge = (status) => {
+    if (!status) return null;
+    const statusMap = {
+      'pending': { text: '대기중', color: '#856404', bgColor: '#fff3cd' },
+      'approved': { text: '승인됨', color: '#155724', bgColor: '#d4edda' },
+      'rejected': { text: '거부됨', color: '#721c24', bgColor: '#f8d7da' }
+    };
+    const statusInfo = statusMap[status] || { text: status, color: '#6b7280', bgColor: '#f3f4f6' };
+    
+    return (
+      <span style={{
+        display: 'inline-block',
+        padding: '4px 12px',
+        borderRadius: '6px',
+        fontSize: '0.85rem',
+        fontWeight: '600',
+        color: statusInfo.color,
+        backgroundColor: statusInfo.bgColor
+      }}>
+        {statusInfo.text}
+      </span>
+    );
+  };
+
   const getStatusBadgeClass = (status) => {
     switch (status) {
       case 'pending': return 'status-pending';
@@ -1157,9 +1216,7 @@ const RequestBoard = () => {
                     {request.title || request.name}
                   </td>
                   <td>
-                    <span className={`status-badge ${getStatusBadgeClass(request.status)}`}>
-                      {getStatusText(request.status)}
-                    </span>
+                    {getStatusBadge(request.status)}
                   </td>
                   <td>
                     <button 
@@ -1278,20 +1335,13 @@ const RequestBoard = () => {
               {selectedRequest.status === 'pending' && (
                 <section className="request-detail-drawer__section">
                   <h3>위험도 분석</h3>
-                  {/* 스캔 여부에 따라 버튼 표시 조건 변경 */}
-                  {/* scanned가 0이거나 null이고, 저장된 결과도 없으면 Run Analysis 버튼만 표시 */}
+                  {/* analysis_timestamp가 없을 때만 Run Analysis 버튼 표시 */}
                   {(() => {
-                    const isNotScanned = !selectedRequest.scanned || selectedRequest.scanned === 0 || selectedRequest.scanned === '0' || selectedRequest.scanned === false;
-                    // 저장된 결과 확인 (가장 확실한 방법)
-                    const savedResult = riskAnalysisResults[selectedRequest.id];
-                    // 현재 결과도 확인 (렌더링 중에 복원되었을 수 있음)
-                    const currentResult = riskAnalysisResult;
-                    const hasAnyResult = savedResult || (currentResult && (currentResult.scanId || currentResult.ossVulnerabilities !== undefined));
+                    // analysis_timestamp가 없으면 버튼 표시
+                    const hasAnalysisTimestamp = selectedRequest.analysis_timestamp && selectedRequest.analysis_timestamp.trim() !== '';
+                    const shouldShowButton = !hasAnalysisTimestamp;
                     
-                    // scanned가 0이고 결과도 없으면 버튼 표시
-                    const shouldShowButton = isNotScanned && !hasAnyResult;
-                    
-                    console.log('Run Analysis 버튼 조건 - isNotScanned:', isNotScanned, 'savedResult:', savedResult, 'currentResult:', currentResult, 'hasAnyResult:', hasAnyResult, 'shouldShowButton:', shouldShowButton);
+                    console.log('Run Analysis 버튼 조건 - analysis_timestamp:', selectedRequest.analysis_timestamp, 'hasAnalysisTimestamp:', hasAnalysisTimestamp, 'shouldShowButton:', shouldShowButton);
                     
                     return shouldShowButton;
                   })() && (
@@ -1673,9 +1723,7 @@ const RequestBoard = () => {
                     <div className="request-detail-drawer__info-item" style={{ gridColumn: '1 / -1' }}>
                       <span className="request-detail-drawer__info-label">현재 상태</span>
                       <span className="request-detail-drawer__info-value">
-                        <span className={`status-badge ${getStatusBadgeClass(selectedRequest.status)}`}>
-                          {getStatusText(selectedRequest.status)}
-                        </span>
+                        {getStatusBadge(selectedRequest.status)}
                         <p style={{ marginTop: '8px', color: '#6c5d53', fontWeight: 'normal' }}>
                           검토 대기 중입니다. 관리자가 검토 후 결과를 알려드립니다.
                         </p>
@@ -1692,9 +1740,7 @@ const RequestBoard = () => {
                     <div className="request-detail-drawer__info-item">
                       <span className="request-detail-drawer__info-label">상태</span>
                       <span className="request-detail-drawer__info-value">
-                        <span className={`status-badge ${getStatusBadgeClass(selectedRequest.status)}`}>
-                          {getStatusText(selectedRequest.status)}
-                        </span>
+                        {getStatusBadge(selectedRequest.status)}
                       </span>
                     </div>
                     {selectedRequest.reviewer && (

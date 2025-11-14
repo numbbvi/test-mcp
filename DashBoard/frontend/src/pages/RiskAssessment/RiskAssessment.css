@@ -203,25 +203,33 @@
 }
 
 .severity-pill--critical {
-  background: linear-gradient(135deg, #ff3b30 0%, #ff5a3c 100%);
+  background-color: #dc3545;
+  color: #fff;
 }
 
 .severity-pill--high {
-  background: linear-gradient(135deg, #ff8000 0%, #ff9c2c 100%);
+  background-color: #fd7e14;
+  color: #fff;
 }
 
 .severity-pill--medium {
-  background: linear-gradient(135deg, #ffbf00 0%, #ffd24d 100%);
-  color: #3e2d00;
+  background-color: #ffc107;
+  color: #333;
 }
 
 .severity-pill--low {
-  background: linear-gradient(135deg, #1fbe64 0%, #54d98c 100%);
+  background-color: #28a745;
+  color: #fff;
+}
+
+.severity-pill--info {
+  background-color: #6c757d;
+  color: #fff;
 }
 
 .severity-pill--unknown {
-  background: linear-gradient(135deg, #9aa0b4 0%, #c4cad9 100%);
-  color: #1f2233;
+  background-color: #6c757d;
+  color: #fff;
 }
 
 /* UI 디렉토리 - 리스크 인디케이터 */
@@ -885,7 +893,7 @@
 
 /* 리스트 페이지 스타일 */
 .list-page__controls-row {
-  padding: 19px 0px;
+  padding: 16px 16px;
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
@@ -945,12 +953,10 @@
 
 .search-container {
   flex: 1;
-  min-width: 500px;
   max-width: 800px;
   position: relative;
   display: flex;
-  align-items: flex-end;
-  padding-bottom: 8px;
+  align-items: center;
 }
 
 .search-icon {
@@ -998,9 +1004,9 @@
 }
 
 .requests-table th {
-  padding: 8px 16px;
+  padding: 12px 24px;
   border-right: 1.5px solid rgba(224, 224, 224, 0.3);
-  text-align: left !important;
+  text-align: left;
   font-size: 0.8rem;
   font-weight: 600;
   color: #666;
@@ -1039,7 +1045,7 @@
 }
 
 .requests-table td {
-  padding: 8px 16px;
+  padding: 12px 24px;
   border-bottom: 1px solid #f0f0f0;
   border-right: 1.5px solid rgba(240, 240, 240, 0.5);
   color: #333;
@@ -1236,7 +1242,7 @@
 }
 
 .btn-refresh:hover:not(:disabled) {
-  background: #002640 !important;
+  background: #002640;
 }
 
 .btn-refresh:disabled {
@@ -1313,6 +1319,7 @@
 }
 
 .table-wrapper {
+  margin: 0 32px 32px 32px;
   overflow-x: auto;
   background: #f5f5f5;
   border-radius: 8px;
@@ -1350,23 +1357,7 @@
 }
 
 .system-row__link {
-  text-align: center;
-  min-width: 70px;
-  max-width: 70px;
-}
-
-.system-row__analysis {
-  text-align: center;
-  width: 140px;
-  min-width: 200px;
-  max-width: 200px;
-}
-
-.requests-table th:nth-child(4) {
-  width: 140px;
-  min-width: 200px;
-  max-width: 200px;
-  text-align: left !important;
+  text-align: right;
 }
 
 /* 기존 RiskAssessment 스타일 */
@@ -1381,10 +1372,38 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--bg);
   height: 100%;
   min-height: 0;
+}
+
+.total-vulnerabilities-content {
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  min-height: 0;
+  padding: 24px;
+}
+
+/* 원 그래프 섹션 반응형 */
+.pie-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+@media (max-width: 1200px) {
+  .pie-charts-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .pie-charts-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .risk-assessment-breadcrumb {
@@ -1545,7 +1564,7 @@
   background: #fcfdff;
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 1;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
@@ -1569,6 +1588,12 @@
 .tool-validation-table th,
 .tool-validation-table td {
   vertical-align: middle;
+  overflow: visible;
+}
+
+.tool-validation-table {
+  table-layout: auto;
+  width: 100%;
 }
 
 .issues-table th.sortable {
@@ -1599,12 +1624,13 @@
 }
 
 /* Current Version과 Fix Version 열 너비 축소 */
-/* Reachability 열 가운데 정렬 */
+/* Reachability 열 가운데 정렬 (OSS Vulnerabilities) */
 .issues-table th:nth-child(3),
 .issues-table td:nth-child(3) {
   text-align: center;
 }
 
+/* OSS Vulnerabilities 테이블 열 너비 (9열 구조) */
 .issues-table th:nth-child(5),
 .issues-table td:nth-child(5) {
   width: 120px;
@@ -1618,6 +1644,7 @@
   max-width: 120px;
   min-width: 120px;
 }
+
 
 .issues-table tbody tr {
   cursor: pointer;
@@ -1636,27 +1663,31 @@
 /* Tool Validation 테이블 열 너비 조정 */
 .tool-validation-table th:first-child,
 .tool-validation-table td:first-child {
-  width: 250px;
-  min-width: 250px;
+  min-width: 180px;
   max-width: 250px;
   padding-left: 24px;
   padding-right: 12px;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .tool-validation-table th.tool-validation-host,
 .tool-validation-table td:nth-child(2) {
-  width: 120px;
-  min-width: 120px;
-  max-width: 120px;
+  min-width: 150px;
+  max-width: 200px;
   padding-left: 12px;
-  padding-right: 8px;
+  padding-right: 12px;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .tool-validation-table th.tool-validation-method,
 .tool-validation-table td:nth-child(3) {
-  width: 80px;
-  min-width: 80px;
-  max-width: 80px;
+  width: 100px;
+  min-width: 100px;
+  max-width: 100px;
   padding-left: 8px;
   padding-right: 8px;
   text-align: center;
@@ -1664,23 +1695,20 @@
 
 .tool-validation-table th.tool-validation-path,
 .tool-validation-table td:nth-child(4) {
-  width: auto;
-  min-width: 40px;
-  max-width: 100px;
-  padding-left: 8px;
-  padding-right: 2px;
+  min-width: 200px;
+  padding-left: 12px;
+  padding-right: 12px;
   white-space: normal;
   word-break: break-word;
   overflow-wrap: break-word;
-  hyphens: auto;
 }
 
 /* Vulnerability 열 너비 조정 */
 .tool-validation-table th:nth-child(5),
 .tool-validation-table td:nth-child(5) {
-  width: 160px;
-  min-width: 160px;
-  max-width: 160px;
+  width: 140px;
+  min-width: 140px;
+  max-width: 140px;
   padding-left: 2px;
   padding-right: 12px;
   text-align: center;
@@ -1689,9 +1717,20 @@
 /* 상세보기 열 너비 조정 */
 .tool-validation-table th:last-child,
 .tool-validation-table td:last-child {
-  width: 120px;
-  min-width: 120px;
-  max-width: 120px;
+  width: 150px;
+  min-width: 150px;
+  max-width: 150px;
+  padding-left: 12px;
+  padding-right: 24px;
+  text-align: center;
+}
+
+/* Code Vulnerabilities 테이블 상세보기 열 너비 조정 */
+.issues-table:not(.tool-validation-table) th:last-child,
+.issues-table:not(.tool-validation-table) td:last-child {
+  width: 150px;
+  min-width: 150px;
+  max-width: 150px;
   padding-left: 12px;
   padding-right: 24px;
   text-align: center;
@@ -1709,6 +1748,56 @@
 .package-name {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.85rem;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Code Vulnerabilities 테이블 열 너비 조정 */
+/* 취약점 열 */
+.issues-table:not(.tool-validation-table) th:nth-child(1),
+.issues-table:not(.tool-validation-table) td:nth-child(1) {
+  min-width: 150px;
+  max-width: 250px;
+}
+
+/* 위험도 열 - 너비 확대 */
+.issues-table:not(.tool-validation-table) th:nth-child(2),
+.issues-table:not(.tool-validation-table) td:nth-child(2) {
+  width: 120px;
+  min-width: 120px;
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+/* CWE 열 (Code Vulnerabilities에만 있음) */
+.issues-table:not(.tool-validation-table) th:nth-child(3),
+.issues-table:not(.tool-validation-table) td:nth-child(3) {
+  min-width: 100px;
+  max-width: 120px;
+}
+
+/* 언어 열 (Code Vulnerabilities) 또는 유형 열 (Total Vulnerabilities) */
+.issues-table:not(.tool-validation-table) th:nth-child(4),
+.issues-table:not(.tool-validation-table) td:nth-child(4) {
+  min-width: 100px;
+  max-width: 120px;
+}
+
+/* 취약한 코드 열 (Code Vulnerabilities의 5열) - 한 줄로 표시 */
+.issues-table:not(.tool-validation-table) th:nth-child(5),
+.issues-table:not(.tool-validation-table) td:nth-child(5) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+}
+
+.issues-table:not(.tool-validation-table) td:nth-child(5).package-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .fix-button {
@@ -1914,7 +2003,8 @@
 }
 
 .severity-box {
-  width: 80px;
+  min-width: 100px;
+  width: auto;
   height: 40px;
   display: flex;
   align-items: center;
@@ -1924,6 +2014,8 @@
   font-size: 1.5rem;
   font-weight: 700;
   flex-shrink: 0;
+  padding: 0 16px;
+  box-sizing: border-box;
 }
 
 .info-item {
@@ -2471,25 +2563,33 @@ body.drawer-open {
 }
 
 .severity-pill--critical {
-  background: linear-gradient(135deg, #ff3b30 0%, #ff5a3c 100%);
+  background-color: #dc3545;
+  color: #fff;
 }
 
 .severity-pill--high {
-  background: linear-gradient(135deg, #ff8000 0%, #ff9c2c 100%);
+  background-color: #fd7e14;
+  color: #fff;
 }
 
 .severity-pill--medium {
-  background: linear-gradient(135deg, #ffbf00 0%, #ffd24d 100%);
-  color: #3e2d00;
+  background-color: #ffc107;
+  color: #333;
 }
 
 .severity-pill--low {
-  background: linear-gradient(135deg, #1fbe64 0%, #54d98c 100%);
+  background-color: #28a745;
+  color: #fff;
+}
+
+.severity-pill--info {
+  background-color: #6c757d;
+  color: #fff;
 }
 
 .severity-pill--unknown {
-  background: linear-gradient(135deg, #9aa0b4 0%, #c4cad9 100%);
-  color: #1f2233;
+  background-color: #6c757d;
+  color: #fff;
 }
 
 .dependency-pill {

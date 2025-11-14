@@ -9,12 +9,53 @@ const dbDir = path.join(__dirname, '..', 'db');
 // 데이터베이스 디렉토리가 없으면 생성
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
-  console.log(`데이터베이스 디렉토리 생성: ${dbDir}`);
+  // 디렉토리 권한 설정 (읽기/쓰기/실행)
+  try {
+    fs.chmodSync(dbDir, 0o755);
+    console.log(`데이터베이스 디렉토리 생성 및 권한 설정: ${dbDir}`);
+  } catch (chmodError) {
+    console.error(`디렉토리 권한 설정 실패: ${chmodError.message}`);
+  }
 }
 
 // 데이터베이스 파일 경로 (프로젝트 루트의 db 폴더에 생성)
 const dbPath = path.join(dbDir, 'bomtool.db');
-const db = new Database(dbPath);
+
+// 데이터베이스 파일이 이미 존재하면 권한 확인 및 수정
+if (fs.existsSync(dbPath)) {
+  try {
+    // 더 강력한 권한 설정 (읽기/쓰기 가능)
+    fs.chmodSync(dbPath, 0o666);
+    console.log(`데이터베이스 파일 권한 확인: ${dbPath}`);
+    
+    // 파일 소유자 확인
+    const stats = fs.statSync(dbPath);
+    console.log(`데이터베이스 파일 소유자: uid=${stats.uid}, gid=${stats.gid}`);
+  } catch (chmodError) {
+    console.error(`데이터베이스 파일 권한 설정 실패: ${chmodError.message}`);
+    console.error(`파일 경로: ${dbPath}`);
+    console.error(`파일 존재 여부: ${fs.existsSync(dbPath)}`);
+  }
+} else {
+  console.log(`데이터베이스 파일이 없습니다. 새로 생성합니다: ${dbPath}`);
+}
+
+// 데이터베이스 연결 시 WAL 모드 사용 (더 나은 동시성 및 성능)
+const db = new Database(dbPath, { 
+  verbose: (sql) => {
+    // SQL 쿼리 로그는 필요시 활성화
+    // console.log('[SQL]', sql);
+  }
+});
+
+// WAL 모드 활성화 (Write-Ahead Logging - 더 나은 동시성)
+try {
+  db.pragma('journal_mode = WAL');
+  console.log('데이터베이스 WAL 모드 활성화 완료');
+} catch (walError) {
+  console.error('WAL 모드 활성화 실패:', walError.message);
+  // WAL 모드가 실패해도 계속 진행
+}
 
 // 외래 키 제약 조건 활성화
 db.pragma('foreign_keys = ON');
@@ -787,6 +828,26 @@ const initializeTables = () => {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     
+  }
+
+  // Code Vulnerabilities 테이블 마이그레이션
+  try {
+    const codeVulnTableExists = db.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='code_vulnerabilities'
+    `).get();
+    
+    if (codeVulnTableExists) {
+      const codeVulnTableInfo = db.prepare("PRAGMA table_info(code_vulnerabilities)").all();
+      const codeVulnColumnNames = codeVulnTableInfo.map(col => col.name);
+      
+      // result_filename 컬럼 추가
+      if (!codeVulnColumnNames.includes('result_filename')) {
+        db.exec(`ALTER TABLE code_vulnerabilities ADD COLUMN result_filename TEXT`);
+        console.log('Code Vulnerabilities 테이블: result_filename 컬럼 추가 완료');
+      }
+    }
+  } catch (codeVulnError) {
+    console.error('Code Vulnerabilities 테이블 마이그레이션 오류:', codeVulnError);
   }
 
   console.log('데이터베이스 테이블 초기화 완료');

@@ -46,6 +46,8 @@ def main():
     args = parser.parse_args()
 
     try:
+        # output 디렉토리 확인 및 생성
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
         
         manager = MCPScannerManager(temp_dir=str(TEMP_DIR), verbose=args.verbose)
